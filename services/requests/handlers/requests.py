@@ -899,6 +899,7 @@ def createRequest(event, context):
             "requestId": str(request_detail["id"]),
             "key": request_key,
             "catalogItemId": catalog_item_id,
+            "catalogItemName": catalog_item_name,
             "requesterId": requester_id,
             "status": initial_status,
         },
@@ -1484,7 +1485,7 @@ def changeRequestStatus(event, context):
             SET
                 status = :status,
                 fulfilled_at = CASE
-                    WHEN :status = 'fulfilled'
+                    WHEN CAST(:status AS varchar) = 'fulfilled'
                     THEN CURRENT_TIMESTAMP
                     ELSE fulfilled_at
                 END
@@ -1590,6 +1591,8 @@ def changeRequestStatus(event, context):
                 "key": request_detail["key"],
                 "status": new_status,
                 "previousStatus": current_status,
+                "requesterId": request_detail.get("requester_id"),
+                "catalogItemName": request_detail.get("catalog_item_name"),
                 "actorId": user_id,
             },
             source="ms-requests",
