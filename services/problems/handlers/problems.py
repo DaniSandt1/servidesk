@@ -517,7 +517,6 @@ def createProblem(event, context):
         "data": problem_detail
     }, 201)
 
-
 def getProblem(event, context):
     """PR-03: GET /problems/{id}."""
 
@@ -647,3 +646,669 @@ def getProblem(event, context):
     return ok({
         "data": problem_detail
     })
+
+def updateProblem(event, context):
+    """PR-04: PATCH /problems/{id}."""
+
+    ctx = tenant_ctx(event)
+
+    # 1. Validar permisos
+    if ctx["role"] not in ("admin", "agent"):
+        return error(
+            "No tienes permiso para actualizar problemas",
+            403,
+        )
+
+    # 2. Validar ID
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        problem_id = str(
+            uuid.UUID(path_params.get("id"))
+        )
+    except (ValueError, TypeError, AttributeError):
+        return error(
+            "El ID del problema debe ser un UUID válido",
+            400,
+        )
+
+    # 3. Leer JSON
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (ValueError, TypeError):
+        return error("JSON inválido", 400)
+
+    if not isinstance(body, dict):
+        return error(
+            "El body debe ser un objeto JSON",
+            400,
+        )
+
+    # 4. Validar campos permitidos
+    allowed_fields = {
+        "title",
+        "description",
+        "priority",
+        "root_cause",
+        "ci_id",
+        "owner_id",
+        "fix_change_id",
+    }
+
+    unknown = set(body) - allowed_fields
+
+    if unknown:
+        return error(
+            "Campos no permitidos: "
+            + ", ".join(sorted(unknown)),
+            400,
+        )
+
+    if not body:
+        return error(
+            "Debes enviar al menos un campo",
+            400,
+        )
+
+    # 5. Validar título
+    if "title" in body:
+        title = body["title"]
+
+        if (
+            not isinstance(title, str)
+            or not 3 <= len(title.strip()) <= 200
+        ):
+            return error(
+                "title debe tener entre 3 y 200 caracteres",
+                400,
+            )
+
+        body["title"] = title.strip()
+
+    # 6. Validar descripción y causa raíz
+    for field in ("description", "root_cause"):
+        if field in body:
+            value = body[field]
+
+            if value is not None and (
+                not isinstance(value, str)
+                or len(value) > 5000
+            ):
+                return error(
+                    f"{field} debe tener máximo 5000 caracteres",
+                    400,
+                )
+
+    # 7. Validar prioridad
+    if "priority" in body:
+        if body["priority"] not in (
+            "P1", "P2", "P3", "P4"
+        ):
+            return error(
+                "priority debe ser P1, P2, P3 o P4",
+                400,
+            )
+
+    # 8. Validar UUID opcionales
+    for field in (
+        "ci_id",
+        "owner_id",
+        "fix_change_id",
+    ):
+        if field in body and body[field] is not None:
+            try:
+                body[field] = str(
+                    uuid.UUID(body[field])
+                )
+            except (ValueError, TypeError, AttributeError):
+                return error(
+                    f"{field} debe ser un UUID válido o null",
+                    400,
+                )
+
+    # 9. Conectar al esquema del tenant
+    conn = tenant_conn(ctx["schema"])
+    transaction_started = False
+
+    try:
+        conn.run("BEGIN")
+        transaction_started = True
+
+        # Bloquear el registro durante la actualización
+        rows = conn.run(
+            """
+            SELECT status
+            FROM problems
+            WHERE id = :problem_id
+            FOR UPDATE
+            """,
+            problem_id=problem_id,
+        )
+
+        if not rows:
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "Problema no encontrado",
+                404,
+            )
+
+        # No modificar problemas cerrados
+        if rows[0][0] == "closed":
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "No se puede editar un problema cerrado",
+                409,
+            )
+
+        # Construir UPDATE únicamente con campos permitidos
+        assignments = [
+            f"{field} = :{field}"
+            for field in body
+        ]
+
+        sql = (
+            "UPDATE problems SET "
+            + ", ".join(assignments)
+            + " WHERE id = :problem_id"
+        )
+
+        conn.run(
+            sql,
+            problem_id=problem_id,
+            **body,
+        )
+
+        conn.run("COMMIT")
+        transaction_started = False
+
+    except Exception:
+        if transaction_started:
+            conn.run("ROLLBACK")
+        raise
+
+    # 10. Reutilizar PR-03 para devolver ProblemDetail
+    return getProblem(event, context)
+
+def changeProblemStatus(event, context):
+    """PR-05: PUT /problems/{id}/status."""
+
+    ctx = tenant_ctx(event)
+
+    # 1. Validar permisos
+    if ctx["role"] not in ("admin", "agent"):
+        return error(
+            "No tienes permiso para cambiar el estado",
+            403,
+        )
+
+    # 2. Validar el ID del problema
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        problem_id = str(uuid.UUID(path_params.get("id")))
+    except (ValueError, TypeError, AttributeError):
+        return error(
+            "El ID del problema debe ser un UUID válido",
+            400,
+        )
+
+    # 3. Leer el body JSON
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (ValueError, TypeError):
+        return error("JSON inválido", 400)
+
+    if not isinstance(body, dict):
+        return error(
+            "El body debe ser un objeto JSON",
+            400,
+        )
+
+    # 4. Solo se permite enviar el campo status
+    if set(body) != {"status"}:
+        return error(
+            "Debes enviar únicamente el campo status",
+            400,
+        )
+
+    new_status = body["status"]
+
+    # 5. Estados solicitables mediante PR-05
+    allowed_statuses = {
+        "investigating",
+        "resolved",
+        "closed",
+    }
+
+    if new_status not in allowed_statuses:
+        return error(
+            "Estado inválido. Usa investigating, resolved o closed",
+            400,
+        )
+
+    # 6. Flujo de transiciones aprobado
+    allowed_transitions = {
+        "new": {"investigating"},
+        "investigating": {"resolved"},
+        "known_error": {"resolved"},
+        "resolved": {"closed"},
+        "closed": set(),
+    }
+
+    # 7. Conectar al schema del tenant autenticado
+    conn = tenant_conn(ctx["schema"])
+    transaction_started = False
+
+    try:
+        conn.run("BEGIN")
+        transaction_started = True
+
+        # 8. Bloquear el problema para evitar cambios simultáneos
+        rows = conn.run(
+            """
+            SELECT status, root_cause
+            FROM problems
+            WHERE id = :problem_id
+            FOR UPDATE
+            """,
+            problem_id=problem_id,
+        )
+
+        if not rows:
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "Problema no encontrado",
+                404,
+            )
+
+        current_status, root_cause = rows[0]
+
+        # 9. Comprobar que la transición sea válida
+        valid_next_statuses = allowed_transitions.get(
+            current_status, set()
+        )
+
+        if new_status not in valid_next_statuses:
+            conn.run("ROLLBACK")
+            transaction_started = False
+
+            return error(
+                "INVALID_STATUS_TRANSITION: "
+                f"No se permite pasar de {current_status} "
+                f"a {new_status}",
+                409,
+            )
+
+        # 10. Para resolver, la causa raíz es obligatoria
+        if new_status == "resolved":
+            if (
+                not isinstance(root_cause, str)
+                or not root_cause.strip()
+            ):
+                conn.run("ROLLBACK")
+                transaction_started = False
+
+                return error(
+                    "No se puede resolver el problema "
+                    "sin registrar root_cause",
+                    409,
+                )
+
+        # 11. Actualizar el estado
+        conn.run(
+            """
+            UPDATE problems
+            SET status = :new_status
+            WHERE id = :problem_id
+            """,
+            new_status=new_status,
+            problem_id=problem_id,
+        )
+
+        # 12. Confirmar la transacción
+        conn.run("COMMIT")
+        transaction_started = False
+
+    except Exception:
+        if transaction_started:
+            conn.run("ROLLBACK")
+        raise
+
+    # 13. Reutilizar PR-03 para obtener ProblemDetail
+    return getProblem(event, context)
+
+def publishKnownError(event, context):
+    """PR-06: POST /problems/{id}/known-error."""
+
+    ctx = tenant_ctx(event)
+
+    # 1. Validar permisos
+    if ctx["role"] not in ("admin", "agent"):
+        return error(
+            "No tienes permiso para publicar errores conocidos",
+            403,
+        )
+
+    # 2. Validar ID del problema
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        problem_id = str(uuid.UUID(path_params.get("id")))
+    except (ValueError, TypeError, AttributeError):
+        return error(
+            "El ID del problema debe ser un UUID válido",
+            400,
+        )
+
+    # 3. Leer JSON
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (ValueError, TypeError):
+        return error("JSON inválido", 400)
+
+    if not isinstance(body, dict):
+        return error(
+            "El body debe ser un objeto JSON",
+            400,
+        )
+
+    # 4. Validar campos permitidos
+    allowed_fields = {"symptom", "workaround"}
+
+    unknown = set(body) - allowed_fields
+
+    if unknown:
+        return error(
+            "Campos no permitidos: "
+            + ", ".join(sorted(unknown)),
+            400,
+        )
+
+    # 5. Validar campos obligatorios
+    for field in ("symptom", "workaround"):
+        value = body.get(field)
+
+        if (
+            not isinstance(value, str)
+            or not 3 <= len(value.strip()) <= 5000
+        ):
+            return error(
+                f"{field} debe tener entre 3 y 5000 caracteres",
+                400,
+            )
+
+        body[field] = value.strip()
+
+    # 6. Conectar al esquema del tenant
+    conn = tenant_conn(ctx["schema"])
+    transaction_started = False
+
+    try:
+        conn.run("BEGIN")
+        transaction_started = True
+
+        # 7. Bloquear el problema
+        rows = conn.run(
+            """
+            SELECT status
+            FROM problems
+            WHERE id = :problem_id
+            FOR UPDATE
+            """,
+            problem_id=problem_id,
+        )
+
+        if not rows:
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "Problema no encontrado",
+                404,
+            )
+
+        current_status = rows[0][0]
+
+        # 8. Solo investigar -> error conocido
+        if current_status != "investigating":
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "Solo se puede publicar un error conocido "
+                "cuando el problema está investigating",
+                409,
+            )
+
+        # 9. Comprobar que no exista un error conocido
+        existing = conn.run(
+            """
+            SELECT id
+            FROM known_errors
+            WHERE problem_id = :problem_id
+            """,
+            problem_id=problem_id,
+        )
+
+        if existing:
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "El problema ya tiene un error conocido",
+                409,
+            )
+
+        # 10. Crear el error conocido
+        rows = conn.run(
+            """
+            INSERT INTO known_errors (
+                problem_id,
+                symptom,
+                workaround
+            )
+            VALUES (
+                :problem_id,
+                :symptom,
+                :workaround
+            )
+            RETURNING id
+            """,
+            problem_id=problem_id,
+            symptom=body["symptom"],
+            workaround=body["workaround"],
+        )
+
+        known_error_id = str(rows[0][0])
+
+        # 11. Cambiar el estado del problema
+        conn.run(
+            """
+            UPDATE problems
+            SET status = 'known_error'
+            WHERE id = :problem_id
+            """,
+            problem_id=problem_id,
+        )
+
+        # 12. Confirmar la transacción
+        conn.run("COMMIT")
+        transaction_started = False
+
+    except Exception:
+        if transaction_started:
+            conn.run("ROLLBACK")
+        raise
+
+    # 13. Publicar evento después del COMMIT
+    publish(
+        event_type="KnownErrorPublished",
+        tenant_id=ctx["tenant_id"],
+        data={
+            "problemId": problem_id,
+            "knownErrorId": known_error_id,
+            "symptom": body["symptom"],
+            "workaround": body["workaround"],
+            "actorId": ctx["user_id"],
+        },
+        source="ms-problems",
+    )
+
+    # 14. Reutilizar PR-03 para construir ProblemDetail
+    detail_response = getProblem(event, context)
+
+    # PR-06 debe responder 201 Created
+    detail_response["statusCode"] = 201
+
+    return detail_response
+
+def linkProblemIncidents(event, context):
+    """PR-07: POST /problems/{id}/incidents."""
+
+    ctx = tenant_ctx(event)
+
+    # 1. Validar permisos
+    if ctx["role"] not in ("admin", "agent"):
+        return error(
+            "No tienes permiso para vincular incidentes",
+            403,
+        )
+
+    # 2. Validar ID del problema
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        problem_id = str(uuid.UUID(path_params.get("id")))
+    except (ValueError, TypeError, AttributeError):
+        return error(
+            "El ID del problema debe ser un UUID válido",
+            400,
+        )
+
+    # 3. Leer JSON
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (ValueError, TypeError):
+        return error("JSON inválido", 400)
+
+    if not isinstance(body, dict):
+        return error(
+            "El body debe ser un objeto JSON",
+            400,
+        )
+
+    # 4. Solo se permite incident_ids
+    if set(body) != {"incident_ids"}:
+        return error(
+            "Debes enviar únicamente incident_ids",
+            400,
+        )
+
+    incident_ids = body["incident_ids"]
+
+    # 5. Validar lista de incidentes
+    if not isinstance(incident_ids, list):
+        return error(
+            "incident_ids debe ser una lista",
+            400,
+        )
+
+    if not 1 <= len(incident_ids) <= 50:
+        return error(
+            "incident_ids debe contener entre 1 y 50 IDs",
+            400,
+        )
+
+    # 6. Validar UUID y eliminar duplicados
+    validated_ids = []
+
+    for incident_id in incident_ids:
+        try:
+            normalized_id = str(uuid.UUID(incident_id))
+        except (ValueError, TypeError, AttributeError):
+            return error(
+                "incident_ids contiene un UUID inválido",
+                400,
+            )
+
+        if normalized_id not in validated_ids:
+            validated_ids.append(normalized_id)
+
+    # 7. Conectar al schema del tenant
+    conn = tenant_conn(ctx["schema"])
+    transaction_started = False
+    inserted_ids = []
+
+    try:
+        conn.run("BEGIN")
+        transaction_started = True
+
+        # 8. Comprobar que el problema exista
+        rows = conn.run(
+            """
+            SELECT id
+            FROM problems
+            WHERE id = :problem_id
+            FOR UPDATE
+            """,
+            problem_id=problem_id,
+        )
+
+        if not rows:
+            conn.run("ROLLBACK")
+            transaction_started = False
+            return error(
+                "Problema no encontrado",
+                404,
+            )
+
+        # 9. Vincular solo los incidentes nuevos
+        for incident_id in validated_ids:
+            rows = conn.run(
+                """
+                INSERT INTO problem_incidents (
+                    problem_id,
+                    incident_id
+                )
+                VALUES (
+                    :problem_id,
+                    :incident_id
+                )
+                ON CONFLICT (
+                    problem_id,
+                    incident_id
+                ) DO NOTHING
+                RETURNING incident_id
+                """,
+                problem_id=problem_id,
+                incident_id=incident_id,
+            )
+
+            if rows:
+                inserted_ids.append(str(rows[0][0]))
+
+        # 10. Confirmar la transacción
+        conn.run("COMMIT")
+        transaction_started = False
+
+    except Exception:
+        if transaction_started:
+            conn.run("ROLLBACK")
+        raise
+
+    # 11. Publicar evento solo por vínculos nuevos
+    if inserted_ids:
+        publish(
+            event_type="ProblemIncidentsLinked",
+            tenant_id=ctx["tenant_id"],
+            data={
+                "problemId": problem_id,
+                "incidentIds": inserted_ids,
+                "actorId": ctx["user_id"],
+            },
+            source="ms-problems",
+        )
+
+    # 12. Devolver ProblemDetail actualizado
+    return getProblem(event, context)
+
