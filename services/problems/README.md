@@ -2,158 +2,459 @@
 
 Microservicio de **gestión de problemas**, análisis de causa raíz, vinculación con incidentes y base de errores conocidos (**KEDB**) de ServiDesk.
 
-> **Estado del avance (12 de noviembre de 2026):** PR-01, PR-02 y PR-03 implementados y probados mediante mocks; migración inicial definida y probada a nivel unitario. **No se ha desplegado ni validado contra PostgreSQL o AWS reales.** Este README documenta el avance de la rama `feature/ms-problems`, no indica que todos los contratos estén terminados.
+> **Estado del desarrollo (noviembre de 2026):** lógica Python de PR-01 a PR-07 implementada. **94 pruebas unitarias de endpoints aprobadas**. La migración inicial cuenta con 10 pruebas unitarias aprobadas en una ejecución anterior. `GET /problems` fue probado en AWS con respuesta HTTP 200. Los otros seis endpoints todavía no cuentan con validación HTTP real y su configuración en Serverless corresponde al equipo de integración.
 
 ## 1. Referencia y alcance
 
-Referencia: `docs/API_CONTRACTS.md`, sección **8.4 — ms-problems**.
+Referencia funcional: `docs/API_CONTRACTS.md`, sección **8.4 — ms-problems**.
 
-- Base de datos: `db_problems`.
-- Aislamiento multitenant: esquema PostgreSQL obtenido del contexto autenticado (`tenant_ctx`), por ejemplo `tenant_andina`.
-- Roles autorizados: `admin` y `agent`. El rol `customer` no accede a los endpoints de problemas.
-- Contrato de listado: `{"data": Problem[], "meta": {...}}`.
-- Contrato de detalle y creación: `{"data": ProblemDetail}`.
-- `ProblemDetail` incluye los campos de `Problem`, además de `incident_ids` y `known_error`.
+- **Base de datos:** PostgreSQL, `db_problems`.
+- **Multitenancy:** aislamiento mediante esquemas PostgreSQL obtenidos del contexto autenticado (`tenant_ctx`), por ejemplo `tenant_andina`.
+- **Roles autorizados:** `admin` y `agent`. El rol `customer` no accede a estos endpoints.
+- **Listado:** respuesta `{ "data": Problem[], "meta": {...} }`.
+- **Detalle y operaciones de escritura:** respuesta `{ "data": ProblemDetail }`, que incluye `incident_ids` y `known_error`.
+- **Responsabilidad del backend:** handlers Python, persistencia, validaciones, reglas de negocio, migraciones y publicación de eventos.
+- **Responsabilidad del equipo de integración:** configuración de Serverless, API Gateway, Authorizer y despliegue conjunto.
 
-## 2. Estado de los endpoints
+## 2. Endpoints y estado actual
 
-| ID | Método y ruta | Función | Estado de implementación | Pruebas |
-|---|---|---|---|---|
-| PR-01 | `GET /problems` | `listProblems` | Implementado | Unitarias con mocks |
-| PR-02 | `POST /problems` | `createProblem` | Implementado en handler; ruta de API Gateway pendiente | Unitarias con mocks |
-| PR-03 | `GET /problems/{id}` | `getProblem` | Implementado en handler; ruta de API Gateway pendiente | Unitarias con mocks |
-| PR-04 | `PATCH /problems/{id}` | Actualizar problema | Pendiente | — |
-| PR-05 | `PUT /problems/{id}/status` | Cambiar estado | Pendiente | — |
-| PR-06 | `POST /problems/{id}/known-error` | Publicar error conocido | Pendiente | — |
-| PR-07 | `POST /problems/{id}/incidents` | Vincular incidentes | Pendiente | — |
+| ID | Método y ruta | Handler | Estado |
+|---|---|---|---|
+| PR-01 | `GET /problems` | `listProblems` | Implementado y probado en AWS |
+| PR-02 | `POST /problems` | `createProblem` | Lógica implementada |
+| PR-03 | `GET /problems/{id}` | `getProblem` | Lógica implementada |
+| PR-04 | `PATCH /problems/{id}` | `updateProblem` | Lógica implementada |
+| PR-05 | `PUT /problems/{id}/status` | `changeProblemStatus` | Lógica implementada |
+| PR-06 | `POST /problems/{id}/known-error` | `publishKnownError` | Lógica implementada |
+| PR-07 | `POST /problems/{id}/incidents` | `linkProblemIncidents` | Lógica implementada |
 
-**Nota sobre el contrato:** las marcas `A parcial` y `C` de `docs/API_CONTRACTS.md` son clasificaciones del documento; la tabla anterior muestra **el avance real de implementación**. No deben confundirse.
+**Importante:** los siete handlers tienen pruebas unitarias aprobadas, pero únicamente PR-01 se ha comprobado mediante una petición HTTP real en AWS. Las rutas PR-02 a PR-07 están pendientes de integración con API Gateway.
 
-## 3. Funcionalidades implementadas y mejoras técnicas
+## 3. Funcionalidades implementadas
 
 ### PR-01 — Listar problemas
 
+Permite consultar los problemas del tenant autenticado.
+
+Funcionalidades:
+
+- Paginación con `page` y `limit`.
+- Límite predeterminado de 20 registros y máximo de 100.
+- Filtros por estado, prioridad, CI y responsable.
+- Búsqueda por clave o título.
+- Ordenamiento por fecha, prioridad, estado o clave.
+- Validación de parámetros.
+- Consultas SQL parametrizadas.
 - Acceso exclusivo a `admin` y `agent`.
-- Aislamiento por esquema del tenant autenticado.
-- Paginación mediante `page` (desde 1) y `limit` (1–100, valor por defecto 20), con respuesta `meta`.
-- Filtros por `status`, `priority`, `ci_id` y `owner_id`; este último admite UUID o `me` para el usuario autenticado.
-- Búsqueda por `key` y `title` (parámetro `search`).
-- Ordenamiento por `created_at`, `priority`, `status` o `key`, ascendente o descendente.
-- Validación de estados, prioridades, UUID, página, límite, búsqueda y campos de ordenamiento.
-- Consultas parametrizadas; los campos de ordenamiento se seleccionan exclusivamente de una lista permitida.
+
+Respuesta exitosa: `200 OK`.
 
 ### PR-02 — Crear problema
 
-- Acceso exclusivo a `admin` y `agent` y validación del cuerpo JSON.
-- Validación de `title` (3–200 caracteres), `description` (máximo 5000), `priority` (`P1`–`P4`) y UUID opcionales.
-- `owner_id` predeterminado al identificador del usuario del contexto autenticado.
-- Hasta 50 `incident_ids`, comprobados como UUID y deduplicados.
-- Generación de clave `PRB-000001`, `PRB-000002`, etc., y estado inicial `new`.
-- Transacción de base de datos con `BEGIN`, `COMMIT` y `ROLLBACK` ante errores; bloqueo consultivo transaccional para evitar colisiones al generar la clave dentro del mismo esquema.
-- Inserción de vínculos en `problem_incidents` mediante `ON CONFLICT DO NOTHING`.
-- Respuesta `201` con `ProblemDetail`, incluyendo `incident_ids` y `known_error: null`.
-- Publicación de `ProblemCreated` y, cuando se vinculan incidentes, `ProblemIncidentsLinked` mediante el mecanismo compartido de eventos.
+Permite registrar un problema nuevo.
 
-**Límite de esta implementación:** la publicación de eventos se realiza después del `COMMIT`; todavía no hay patrón *outbox* ni una estrategia implementada para garantizar entrega ante fallos de SNS posteriores a la confirmación en base de datos.
+Validaciones:
+
+- `title`: obligatorio, de 3 a 200 caracteres.
+- `description`: máximo 5000 caracteres.
+- `priority`: `P1`, `P2`, `P3` o `P4`.
+- `ci_id`: UUID válido o `null`.
+- `owner_id`: UUID válido; por defecto, el usuario autenticado.
+- `incident_ids`: máximo 50 incidentes.
+
+El backend genera automáticamente:
+
+- Una clave correlativa, por ejemplo `PRB-000001`.
+- Estado inicial `new`.
+- Fecha de creación.
+
+La operación utiliza una transacción PostgreSQL y evita vínculos duplicados.
+
+Publica los eventos `ProblemCreated` y, cuando corresponde, `ProblemIncidentsLinked`.
+
+Respuesta exitosa: `201 Created` con `ProblemDetail`.
 
 ### PR-03 — Consultar problema
 
-- Acceso exclusivo a `admin` y `agent`.
-- Validación del UUID recibido en `{id}`.
-- Consulta del problema en el esquema del tenant.
-- Respuesta `404` cuando no se encuentra el registro; `400` para identificador inválido y `403` para rol no autorizado.
-- Construcción de `ProblemDetail` consultando `problems`, `problem_incidents` y `known_errors`.
-- `incident_ids` como arreglo y `known_error` como objeto o `null`.
-- Serialización de UUID y fechas para la respuesta JSON.
+Permite obtener el detalle de un problema mediante su UUID.
 
-### Mejoras de implementación frente al contrato resumido
+Incluye:
 
-El contrato especifica las rutas, roles, entidades, formatos de respuesta y validaciones principales. Como decisiones de implementación se agregaron: validaciones explícitas de parámetros de consulta y UUID, deduplicación de incidentes, consultas SQL parametrizadas, generación protegida de claves, transacción con reversión, respuestas de error para consulta por ID y serialización de datos. Estas decisiones **no modifican el contrato funcional oficial**.
+- Información principal del problema.
+- Incidentes relacionados.
+- Error conocido, si existe.
 
-## 4. Modelo de datos y migración inicial
+Devuelve `404` si el problema no existe y `400` si el UUID es inválido.
 
-Archivo: `migrations/001_init.sql`.
+Respuesta exitosa: `200 OK` con `ProblemDetail`.
+
+### PR-04 — Actualizar problema
+
+Permite modificar los siguientes campos:
+
+- `title`
+- `description`
+- `priority`
+- `root_cause`
+- `ci_id`
+- `owner_id`
+- `fix_change_id`
+
+Reglas:
+
+- Rechaza campos no permitidos.
+- Rechaza cuerpos JSON vacíos o inválidos.
+- Valida las longitudes y los UUID.
+- No permite modificar directamente `id`, `key`, `status` ni `created_at`.
+- No permite actualizar problemas en estado `closed`.
+- Utiliza una transacción y bloqueo de fila mediante `SELECT ... FOR UPDATE`.
+- Ejecuta `ROLLBACK` ante errores de PostgreSQL.
+
+Respuestas principales:
+
+- `200`: actualización correcta.
+- `400`: datos inválidos.
+- `403`: usuario sin permisos.
+- `404`: problema inexistente.
+- `409`: problema cerrado.
+
+La respuesta exitosa contiene `ProblemDetail`.
+
+### PR-05 — Cambiar estado
+
+Permite cambiar el estado de un problema siguiendo el flujo de negocio aprobado.
+
+Recibe:
+
+```json
+{
+  "status": "investigating"
+}
+```
+
+Solo acepta solicitudes para cambiar a:
+
+- `investigating`
+- `resolved`
+- `closed`
+
+El estado `known_error` se establece exclusivamente mediante PR-06.
+
+Reglas:
+
+- No permite saltar estados.
+- No permite repetir el mismo estado.
+- Para resolver un problema, debe existir una causa raíz (`root_cause`) no vacía.
+- Un problema `closed` no admite nuevas transiciones.
+- Utiliza una transacción con bloqueo de fila.
+
+Respuestas principales:
+
+- `200`: transición correcta.
+- `400`: estado o cuerpo inválido.
+- `403`: usuario sin permisos.
+- `404`: problema inexistente.
+- `409`: transición inválida.
+
+### PR-06 — Publicar error conocido (KEDB)
+
+Permite documentar un error conocido y su solución temporal.
+
+Recibe:
+
+```json
+{
+  "symptom": "Error 502 recurrente",
+  "workaround": "Reiniciar el pool de conexiones"
+}
+```
+
+Validaciones:
+
+- `symptom`: obligatorio, de 3 a 5000 caracteres.
+- `workaround`: obligatorio, de 3 a 5000 caracteres.
+- El problema debe estar en estado `investigating`.
+- El problema no debe tener otro error conocido registrado.
+
+La operación:
+
+1. Comprueba el estado del problema.
+2. Verifica que no exista otro error conocido.
+3. Inserta el registro en `known_errors`.
+4. Cambia el estado del problema a `known_error`.
+5. Confirma la transacción.
+6. Publica `KnownErrorPublished`.
+
+Respuesta exitosa: `201 Created` con `ProblemDetail`.
+
+### PR-07 — Vincular incidentes
+
+Permite asociar incidentes existentes a un problema.
+
+Recibe:
+
+```json
+{
+  "incident_ids": [
+    "5b1e9d7a-2c4f-4e8b-a6d3-9f0e1c2b3a4d"
+  ]
+}
+```
+
+Validaciones y reglas:
+
+- Solo `admin` y `agent` pueden ejecutar la operación.
+- Requiere entre 1 y 50 identificadores.
+- Todos los identificadores deben ser UUID válidos.
+- Elimina UUID duplicados dentro de la solicitud.
+- Ignora relaciones ya existentes mediante `ON CONFLICT DO NOTHING`.
+- Comprueba que el problema exista.
+- Utiliza una transacción PostgreSQL.
+- Publica `ProblemIncidentsLinked` únicamente cuando se crean vínculos nuevos.
+- No verifica directamente la existencia del incidente en `ms-incidents`, porque cada microservicio mantiene su propia base de datos.
+
+Respuesta exitosa: `200 OK` con `ProblemDetail`.
+
+## 4. Flujo definitivo de estados
+
+El flujo de estados acordado para `ms-problems` es:
+
+```text
+new
+  |
+  v
+investigating
+  |
+  +---------> known_error
+  |                |
+  v                |
+resolved <---------+
+  |
+  v
+closed
+```
+
+| Estado actual | Estado siguiente | Condición |
+|---|---|---|
+| `new` | `investigating` | Permitido |
+| `investigating` | `resolved` | Requiere causa raíz |
+| `investigating` | `known_error` | Solo mediante PR-06 |
+| `known_error` | `resolved` | Requiere causa raíz |
+| `resolved` | `closed` | Permitido |
+| `closed` | Ninguno | Estado final |
+
+**Reglas definitivas:**
+
+- Solo se permiten las transiciones indicadas.
+- Las transiciones inválidas devuelven `409 Conflict`.
+- No se puede cambiar a un estado idéntico al actual.
+- `known_error` únicamente se establece mediante la publicación de un error conocido.
+- Para pasar a `resolved`, debe haberse registrado `root_cause`.
+- `closed` es un estado final.
+
+## 5. Modelo de datos
+
+La migración `migrations/001_init.sql` define cuatro tablas.
 
 | Tabla | Responsabilidad |
 |---|---|
-| `problems` | Datos de problema: clave, título, descripción, estado, prioridad, causa raíz, CI, responsable y cambio correctivo. |
-| `problem_incidents` | Relación entre problemas e IDs de incidentes de otro microservicio. Clave compuesta para evitar duplicados. |
-| `known_errors` | Registro KEDB con síntoma y solución temporal (*workaround*); un registro por problema. |
-| `problem_tasks` | Estructura preparatoria para tareas futuras; sus endpoints están fuera del alcance de esta versión. |
+| `problems` | Información principal de los problemas |
+| `problem_incidents` | Relación entre problemas e incidentes |
+| `known_errors` | Base de errores conocidos KEDB |
+| `problem_tasks` | Tabla preparada para ampliaciones futuras |
 
-El SQL propuesto incluye restricciones de estados (`new`, `investigating`, `known_error`, `resolved`, `closed`), prioridades (`P1`–`P4`), longitudes de campos, claves foráneas **internas al microservicio** e índices de consulta.
+La migración incluye:
 
-**Sin FK entre microservicios:** `problem_incidents.incident_id` se almacena como UUID sin referencia a `incidents`, porque los incidentes viven en otra base de datos.
+- Claves primarias UUID.
+- Restricciones de estados y prioridades.
+- Claves foráneas internas al microservicio.
+- Índices para consultas frecuentes.
+- Restricciones de unicidad.
 
-El script `handlers/migrate.py` carga `001_init.sql` y lo ejecuta para los esquemas incluidos en `TENANTS` (`tenant_andina`, `tenant_pacifico`, `tenant_unitec`). **Los tenants aún están definidos en el código**; más adelante deberán obtenerse de un registro central. El migrador todavía no registra versiones aplicadas ni contiene un mecanismo propio de recuperación ante migraciones parciales.
+Los incidentes vinculados se identifican mediante UUID, sin claves foráneas hacia la base de datos de `ms-incidents`.
 
-## 5. Eventos e integración entre microservicios
+### Multitenancy
 
-| Evento | Cuándo se emite en el avance actual | Estado |
+Los datos se aíslan mediante esquemas PostgreSQL.
+
+Actualmente se contemplan:
+
+- `tenant_andina`
+- `tenant_pacifico`
+- `tenant_unitec`
+
+El esquema utilizado por cada operación procede del contexto autenticado y no de los datos enviados por el cliente.
+
+La función `migrate` prepara las tablas en los esquemas indicados.
+
+**Pendiente:** sustituir la lista fija de tenants por un registro central y mejorar el control de versiones de las migraciones.
+
+## 6. Eventos e integración con SNS
+
+`ms-problems` publica los siguientes eventos:
+
+| Evento | Operación | Descripción |
 |---|---|---|
-| `ProblemCreated` | Después de crear el problema | Implementado en PR-02, probado con mock |
-| `ProblemIncidentsLinked` | Si PR-02 recibe incidentes relacionados | Implementado en PR-02, probado con mock |
-| `KnownErrorPublished` | Al publicar un error conocido mediante PR-06 | Pendiente |
+| `ProblemCreated` | PR-02 | Se creó un problema |
+| `ProblemIncidentsLinked` | PR-02 y PR-07 | Se vincularon incidentes a un problema |
+| `KnownErrorPublished` | PR-06 | Se publicó un error conocido |
 
-PR-07 también deberá emitir `ProblemIncidentsLinked` al añadir incidentes posteriormente. La sincronización con `ms-incidents` y la entrega real de eventos **no se han probado como integración extremo a extremo**.
+Los eventos se publican mediante `common.events.publish`.
 
-## 6. Pruebas y resultados
+La publicación se realiza después de confirmar las transacciones PostgreSQL.
 
-Pruebas realizadas durante el desarrollo en Python 3.11 y pytest, usando mocks de base de datos, contexto de autenticación y publicación de eventos.
+**Limitación actual:** si la publicación a SNS falla después de un `COMMIT`, los datos podrían quedar guardados sin que se entregue el evento. No se ha implementado todavía un patrón *outbox* ni una garantía equivalente de entrega.
 
-| Archivo | Cobertura principal | Resultado comunicado |
-|---|---|---:|
-| `tests/test_problems.py` | PR-01 (18), PR-02 (14), PR-03 (9) | **41 aprobadas** |
-| `tests/test_migrate.py` | Archivo SQL, 4 tablas, esquemas, ejecución de sentencias, manejo de errores simulado | **10 aprobadas** |
-| **Total** | **Pruebas unitarias de ms-problems** | **51 aprobadas** |
+La integración real con los consumidores de `ms-incidents` deberá verificarse durante las pruebas conjuntas.
 
-Ejecutar desde la raíz de `servidesk`:
+## 7. Pruebas unitarias
+
+Las pruebas utilizan:
+
+- Python.
+- `unittest`.
+- `unittest.mock`.
+- `MagicMock`.
+- `pytest` como ejecutor.
+
+Se simulan PostgreSQL, el contexto de autenticación, el Layer común y la publicación de eventos.
+
+### Resultados
+
+| Endpoint | Pruebas aprobadas |
+|---|---:|
+| PR-01 · Listar problemas | 18 |
+| PR-02 · Crear problema | 14 |
+| PR-03 · Consultar problema | 9 |
+| PR-04 · Actualizar problema | 10 |
+| PR-05 · Cambiar estado | 14 |
+| PR-06 · Publicar error conocido | 13 |
+| PR-07 · Vincular incidentes | 16 |
+| **Total** | **94** |
+
+Las 94 pruebas de endpoints fueron aprobadas en la última ejecución local comunicada.
+
+Adicionalmente, `test_migrate.py` cuenta con **10 pruebas de migración** aprobadas en una ejecución anterior.
+
+El total potencial es de **104 pruebas**, pendiente de confirmación mediante una ejecución conjunta.
+
+### Ejecutar todas las pruebas
+
+Desde PowerShell, ubicado en la raíz del repositorio:
 
 ```powershell
-python -m pytest .\services\problems\tests\ -v
+python -m pytest services/problems/tests/ -v
 ```
 
-Para ejecutar cada archivo individualmente:
+### Ejecutar únicamente las pruebas de endpoints
 
 ```powershell
-python -m pytest .\services\problems\tests\test_problems.py -v
-python -m pytest .\services\problems\tests\test_migrate.py -v
+python -m pytest services/problems/tests/test_problems.py -v
 ```
 
-**Alcance de los resultados:** estas 51 pruebas pasaron según la ejecución local comunicada durante el desarrollo. No sustituyen pruebas de integración con PostgreSQL, SNS, API Gateway, el authorizer o un despliegue AWS.
+### Ejecutar únicamente las pruebas de migración
 
-## 7. Estructura relevante
+```powershell
+python -m pytest services/problems/tests/test_migrate.py -v
+```
+
+Las pruebas unitarias no requieren AWS ni PostgreSQL real.
+
+## 8. Validación realizada en AWS
+
+Se realizó una prueba real del endpoint `GET /problems`, utilizando:
+
+- AWS API Gateway.
+- Lambda Authorizer.
+- AWS Lambda.
+- PostgreSQL RDS.
+- Esquema `tenant_andina`.
+
+La respuesta obtenida fue:
+
+```http
+HTTP/2 200
+Content-Type: application/json
+```
+
+```json
+{
+  "data": [],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 0,
+    "total_pages": 0
+  }
+}
+```
+
+Esta prueba confirmó que PR-01 podía consultar PostgreSQL correctamente desde AWS.
+
+**Importante:** los endpoints PR-02 a PR-07 todavía no se han probado mediante HTTP real en AWS. Su integración y exposición mediante Serverless corresponde al equipo encargado del despliegue.
+
+## 9. Estructura del microservicio
 
 ```text
 services/problems/
 ├── handlers/
-│   ├── problems.py             # PR-01, PR-02 y PR-03
-│   └── migrate.py              # Migración por schema de tenant
+│   ├── problems.py
+│   └── migrate.py
 ├── migrations/
-│   └── 001_init.sql            # Tablas e índices iniciales
+│   └── 001_init.sql
 ├── tests/
-│   ├── test_problems.py        # 41 pruebas unitarias
-│   └── test_migrate.py         # 10 pruebas unitarias
+│   ├── test_problems.py
+│   └── test_migrate.py
 ├── serverless.yml
 └── README.md
 ```
 
-## 8. Infraestructura y puntos pendientes
+Descripción:
 
-Actualmente, `serverless.yml` declara la ruta **`GET /problems`** y la función `migrate`. Aunque los handlers de PR-02 y PR-03 están escritos y probados, **faltan las rutas** `POST /problems` y `GET /problems/{id}` en API Gateway.
+- `problems.py`: lógica de PR-01 a PR-07.
+- `migrate.py`: inicialización de las tablas por esquema.
+- `001_init.sql`: definición de las tablas y restricciones.
+- `test_problems.py`: 94 pruebas unitarias de endpoints.
+- `test_migrate.py`: 10 pruebas de migración realizadas anteriormente.
+- `serverless.yml`: configuración de despliegue, gestionada por el equipo de integración.
 
-Antes de considerar este servicio listo para integración o despliegue:
+## 10. Pendientes antes de la integración completa
 
-1. Registrar en `serverless.yml` las rutas PR-02 y PR-03 con su autorización.
-2. Implementar PR-04, PR-05, PR-06 y PR-07 y sus pruebas.
-3. Probar las migraciones y los endpoints contra PostgreSQL real, especialmente `gen_random_uuid()`, restricciones SQL, transacciones y datos devueltos por `RETURNING`.
-4. Comprobar envío y consumo real de eventos a través de SNS y la interoperabilidad con `ms-incidents`.
-5. Revisar confiabilidad de eventos publicados después del `COMMIT` (por ejemplo, patrón *outbox* o reintentos controlados).
-6. Revisar migraciones versionadas, recuperación ante errores y administración de tenants.
-7. Completar pruebas de integración, API Gateway y autorización antes de desplegar.
+Aunque la lógica principal está implementada, todavía quedan tareas para integrar todo ServiDesk.
 
-## 9. Resumen de entrega parcial
+### Equipo de integración
 
-**Entregado a nivel de implementación local:** tres operaciones del contrato (PR-01, PR-02 y PR-03), validaciones y controles de acceso, consultas multitenant, creación transaccional, vinculación inicial de incidentes, publicación de eventos simulada, migración inicial de cuatro tablas y **51 pruebas unitarias aprobadas**.
+- Declarar las rutas PR-02 a PR-07 en Serverless.
+- Verificar la autorización de cada endpoint.
+- Desplegar las funciones en AWS.
+- Realizar pruebas reales contra PostgreSQL.
+- Comprobar publicación y consumo de eventos SNS.
+- Integrar `ms-problems` con `ms-incidents`.
 
-**No entregado todavía:** PR-04 a PR-07, exposición HTTP de PR-02 y PR-03, integración comprobada con servicios AWS/PostgreSQL reales y despliegue.
+### Backend
+
+- Revisar casos límite y consistencia de las respuestas.
+- Mejorar la confiabilidad de la publicación de eventos.
+- Revisar migraciones versionadas y administración dinámica de tenants.
+- Ejecutar nuevamente todas las pruebas unitarias.
+- Mantener sincronizados los contratos del backend y frontend.
+
+## 11. Resumen final
+
+**Lógica implementada:**
+
+- PR-01: listar problemas.
+- PR-02: crear problemas.
+- PR-03: consultar problemas.
+- PR-04: actualizar problemas.
+- PR-05: cambiar estados.
+- PR-06: publicar errores conocidos.
+- PR-07: vincular incidentes.
+
+**Pruebas realizadas:**
+
+- 94 pruebas unitarias de endpoints aprobadas.
+- 10 pruebas de migración aprobadas anteriormente.
+- Una prueba real exitosa de PR-01 en AWS.
+
+**Estado del microservicio:** lógica principal implementada y probada unitariamente. Pendiente de pruebas de integración completas y exposición HTTP de PR-02 a PR-07 por parte del equipo responsable de Serverless.
