@@ -28,7 +28,6 @@ _Orig = pg8000.native.Connection
 class _Conn(_Orig):
     def __init__(self, *a, **kw):
         kw["port"] = PORT
-        kw["ssl_context"] = None
         super().__init__(*a, **kw)
 
 
