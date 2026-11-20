@@ -2,3 +2,5 @@ pg8000==1.31.2
 PyJWT==2.9.0
 # boto3 del runtime de Lambda (botocore) exige python-dateutil<3; la capa se carga antes que el runtime
 python-dateutil==2.9.0.post0
+# scramp 1.5 quitó make_channel_binding, que pg8000 1.31.2 usa con SSL (RDS exige SSL)
+scramp==1.4.5
