@@ -2,11 +2,13 @@
 
 ## Descripción
 
-Microservicio encargado de gestionar incidentes, prioridades, políticas SLA y comentarios dentro de ServiDesk.
+Microservicio encargado de gestionar **incidentes, prioridades, políticas SLA, estados y comentarios** dentro de ServiDesk.
 
-Utiliza PostgreSQL con aislamiento multi-tenant mediante schemas y se integra con otros microservicios mediante eventos SNS/SQS.
+Utiliza PostgreSQL con aislamiento multi-tenant mediante esquemas (`schemas`) y se integra con otros microservicios mediante eventos SNS/SQS.
 
 ## Estado de implementación
+
+**Estado actual:** lógica Python de los 7 endpoints implementada y **90 pruebas unitarias aprobadas**.
 
 | Funcionalidad | Estado |
 |---|---|
@@ -15,96 +17,490 @@ Utiliza PostgreSQL con aislamiento multi-tenant mediante schemas y se integra co
 | IN-03 · `GET /incidents/{id}` | Implementado y probado |
 | IN-04 · `PATCH /incidents/{id}` | Implementado y probado |
 | IN-05 · `PUT /incidents/{id}/status` | Implementado y probado |
-| IN-06 · `GET /incidents/{id}/comments` | Pendiente |
-| IN-07 · `POST /incidents/{id}/comments` | Pendiente |
+| IN-06 · `GET /incidents/{id}/comments` | Implementado y probado |
+| IN-07 · `POST /incidents/{id}/comments` | Implementado y probado |
 | Consumidor SQS `CIStatusChanged` | Implementado y probado |
 | Publicación de eventos SNS | Implementada; probada con mocks |
 | Migraciones SQL | `001_init.sql` y `002_events.sql` preparadas |
 
-### Funcionalidades implementadas
+Los siete endpoints tienen lógica Python implementada. Esto no significa que todas las rutas estén configuradas o desplegadas en AWS.
 
-- Creación manual de incidentes con validaciones y restricciones según el rol.
-- Listado de incidentes con paginación, filtros, búsqueda y ordenamiento.
-- Consulta individual de incidentes con aislamiento por tenant y usuario.
-- Actualización de incidentes y recálculo automático de prioridad y SLA.
-- Transiciones de estado según las reglas del contrato.
-- Registro de cambios de estado en `incident_events`.
-- Creación de comentarios públicos al resolver incidentes.
-- Creación automática de incidentes P2 cuando un CI cambia a `down`.
-- Deduplicación de mensajes mediante `processed_events`.
-- Publicación de `IncidentCreated`, `IncidentUpdated` e `IncidentResolved`.
+## 1. Endpoints implementados
 
-## Pruebas unitarias
+### IN-01 — Listar incidentes
 
-Se ejecutaron **62 pruebas unitarias exitosas** con `pytest` y mocks.
+**`GET /incidents`**
 
-Las pruebas cubren los handlers de incidentes y el consumidor de eventos SQS. No requieren conexión real a AWS ni PostgreSQL.
+Permite consultar incidentes con paginación, filtros y ordenamiento.
 
-Para ejecutarlas desde la raíz del repositorio:
+Funcionalidades:
 
-```bash
-python -m pytest services/incidents/tests/ -v
+- Paginación mediante `page` y `limit`.
+- Límite predeterminado de 20 registros y máximo de 100.
+- Filtros por estado, prioridad, impacto y urgencia.
+- Filtros por CI, equipo, responsable y problema relacionado.
+- Búsqueda por clave o título.
+- Ordenamiento por fecha, prioridad, vencimiento SLA, estado o clave.
+- Filtro de incidentes con SLA incumplido.
+- Restricción de visibilidad para `customer`.
+
+**Permisos:** `admin`, `agent` y `customer`.
+
+Los usuarios `customer` únicamente pueden consultar incidentes donde sean el reportante.
+
+Respuesta exitosa: `200 OK`.
+
+### IN-02 — Crear incidente
+
+**`POST /incidents`**
+
+Permite registrar incidentes manualmente.
+
+Validaciones principales:
+
+- `title`: obligatorio, entre 3 y 200 caracteres.
+- `description`: máximo 5000 caracteres.
+- `impact`: `high`, `medium` o `low`.
+- `urgency`: `high`, `medium` o `low`.
+- `ci_id`, `team_id` y `assignee_id`: UUID opcionales.
+
+El backend calcula automáticamente:
+
+- Clave correlativa, por ejemplo `INC-000001`.
+- Estado inicial `new`.
+- Prioridad mediante la matriz de impacto y urgencia.
+- Política SLA correspondiente.
+- Fecha límite de resolución.
+- Usuario reportante.
+- Canal `portal`.
+
+Los usuarios `customer` no pueden asignar directamente un equipo ni un agente.
+
+La operación utiliza una transacción PostgreSQL y publica el evento `IncidentCreated`.
+
+Respuesta exitosa: `201 Created`.
+
+### IN-03 — Consultar incidente
+
+**`GET /incidents/{id}`**
+
+Permite consultar el detalle de un incidente mediante su UUID.
+
+Validaciones:
+
+- UUID válido.
+- Existencia del incidente.
+- Aislamiento por tenant.
+- Restricción por reportante para `customer`.
+
+Si el incidente no existe o un `customer` intenta consultar uno ajeno, devuelve `404 Not Found`.
+
+Respuesta exitosa: `200 OK`.
+
+### IN-04 — Actualizar incidente
+
+**`PATCH /incidents/{id}`**
+
+Permite actualizar los campos:
+
+- `title`
+- `description`
+- `impact`
+- `urgency`
+- `ci_id`
+- `team_id`
+- `assignee_id`
+- `problem_id`
+
+**Permisos:** `admin` y `agent`.
+
+Reglas:
+
+- Se rechazan campos no permitidos.
+- Se validan textos y UUID.
+- No se permite actualizar incidentes cerrados.
+- Si cambia el impacto o la urgencia, se recalculan la prioridad y el SLA.
+- La actualización utiliza una transacción PostgreSQL.
+- Publica el evento `IncidentUpdated`.
+
+Respuestas principales:
+
+- `200`: actualización exitosa.
+- `400`: datos inválidos.
+- `403`: usuario sin permisos.
+- `404`: incidente inexistente.
+- `409`: incidente cerrado.
+
+### IN-05 — Cambiar estado
+
+**`PUT /incidents/{id}/status`**
+
+Permite administrar el ciclo de vida de un incidente.
+
+Estados disponibles:
+
+- `new`
+- `in_progress`
+- `on_hold`
+- `resolved`
+- `closed`
+
+Reglas principales:
+
+- Solo se permiten las transiciones definidas en el contrato.
+- Para resolver un incidente es obligatorio registrar un comentario.
+- Un `customer` únicamente puede cerrar o reabrir sus propios incidentes resueltos.
+- Los cambios de estado se registran en `incident_events`.
+- Al resolver un incidente se registra un comentario público.
+- Las transiciones inválidas devuelven `409 Conflict`.
+
+Eventos publicados:
+
+- `IncidentUpdated`
+- `IncidentResolved`, cuando el incidente pasa a `resolved`.
+
+Respuesta exitosa: `200 OK`.
+
+### IN-06 — Listar comentarios
+
+**`GET /incidents/{id}/comments`**
+
+Permite consultar los comentarios asociados a un incidente.
+
+**Permisos:** `admin`, `agent` y `customer`.
+
+Funcionalidades implementadas:
+
+- Validación del UUID del incidente.
+- Comprobación de existencia del incidente.
+- Paginación con `page` y `limit`.
+- Límite predeterminado de 20 comentarios y máximo de 100.
+- Orden cronológico por `created_at` e `id`.
+- Aislamiento por tenant.
+- Control de visibilidad de comentarios internos.
+
+**Reglas para `customer`:**
+
+- Solo puede consultar comentarios de sus propios incidentes.
+- No puede visualizar comentarios con `internal = true`.
+- La restricción se aplica directamente en PostgreSQL.
+
+Ejemplo de respuesta:
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440010",
+      "incident_id": "550e8400-e29b-41d4-a716-446655440000",
+      "author_id": "550e8400-e29b-41d4-a716-446655440001",
+      "body": "Estamos revisando el incidente",
+      "internal": false,
+      "created_at": "2026-11-05T08:25:13Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "total_pages": 1
+  }
+}
 ```
 
-## Base de datos y migraciones
+Respuesta exitosa: `200 OK`.
 
-**Base de datos:** `db_incidents`
+Se implementaron 12 pruebas unitarias para este endpoint.
 
-Las tablas se crean dentro del schema correspondiente a cada tenant.
+### IN-07 — Agregar comentario
 
-| Archivo | Contenido |
+**`POST /incidents/{id}/comments`**
+
+Permite registrar comentarios públicos o internos.
+
+Ejemplo de solicitud:
+
+```json
+{
+  "body": "Estamos revisando el incidente",
+  "internal": false
+}
+```
+
+**Permisos:** `admin`, `agent` y `customer`.
+
+Validaciones:
+
+- `body`: texto obligatorio de 1 a 5000 caracteres.
+- `internal`: booleano opcional, por defecto `false`.
+- Se rechazan campos adicionales no permitidos.
+- El identificador del incidente debe ser un UUID válido.
+- El autor se obtiene del contexto autenticado, no del cuerpo de la solicitud.
+
+Reglas:
+
+- `admin` y `agent` pueden registrar comentarios públicos o internos.
+- `customer` únicamente puede comentar sus propios incidentes.
+- `customer` no puede crear comentarios internos.
+- No se permite agregar comentarios a incidentes `closed`.
+- La operación utiliza una transacción PostgreSQL con bloqueo de fila.
+- Ante errores de base de datos se ejecuta `ROLLBACK`.
+
+Ejemplo de respuesta:
+
+```json
+{
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440010",
+    "incident_id": "550e8400-e29b-41d4-a716-446655440000",
+    "author_id": "550e8400-e29b-41d4-a716-446655440001",
+    "body": "Estamos revisando el incidente",
+    "internal": false,
+    "created_at": "2026-11-05T08:25:13Z"
+  }
+}
+```
+
+Respuesta exitosa: `201 Created`.
+
+Se implementaron 18 pruebas unitarias para este endpoint.
+
+## 2. Prioridades y políticas SLA
+
+La prioridad de los incidentes se calcula automáticamente mediante una matriz de impacto y urgencia.
+
+| Impacto / Urgencia | High | Medium | Low |
+|---|---|---|---|
+| High | P1 | P2 | P3 |
+| Medium | P2 | P3 | P4 |
+| Low | P3 | P4 | P4 |
+
+La tabla `sla_policies` almacena:
+
+- Prioridad.
+- Tiempo de respuesta (`response_minutes`).
+- Tiempo de resolución (`resolution_minutes`).
+
+La fecha límite de resolución se calcula utilizando la política correspondiente.
+
+**Pendiente:** definir y registrar los valores SLA oficiales para P1, P2, P3 y P4.
+
+## 3. Integración mediante eventos SNS/SQS
+
+### Eventos publicados
+
+| Evento | Descripción |
+|---|---|
+| `IncidentCreated` | Se registra un incidente nuevo |
+| `IncidentUpdated` | Se actualiza un incidente o su estado |
+| `IncidentResolved` | Un incidente pasa al estado `resolved` |
+
+La publicación se realiza mediante el helper compartido `common.events.publish`.
+
+### Consumidor `CIStatusChanged`
+
+El consumidor SQS `on_ci_status_changed` está implementado.
+
+Cuando recibe un evento `CIStatusChanged` cuyo estado es `down`:
+
+1. Valida los identificadores del evento.
+2. Selecciona el esquema correspondiente al tenant.
+3. Comprueba si el evento ya fue procesado.
+4. Busca la política SLA de prioridad P2.
+5. Genera una clave correlativa.
+6. Crea automáticamente un incidente P2.
+7. Confirma la transacción.
+8. Publica `IncidentCreated`.
+
+Los eventos procesados se registran en `processed_events` para evitar duplicaciones.
+
+El consumidor devuelve los identificadores de mensajes fallidos mediante `batchItemFailures`, permitiendo reintentos.
+
+**Pendiente de integración:** verificar la conexión SNS/SQS, los permisos correspondientes y la configuración de `ReportBatchItemFailures` en AWS.
+
+## 4. Base de datos y migraciones
+
+**Base de datos:** `db_incidents`.
+
+Las tablas se crean dentro del esquema PostgreSQL correspondiente a cada tenant.
+
+| Archivo | Tablas |
 |---|---|
 | `001_init.sql` | `sla_policies`, `incidents`, `incident_comments` |
 | `002_events.sql` | `incident_events`, `processed_events` |
 
-El archivo `handlers/migrate.py` fue actualizado para detectar y ejecutar ambas migraciones en orden.
+### Tablas principales
 
-**Estado:** implementación preparada, pendiente de validación contra PostgreSQL real.
+**`incidents`**
 
-## Pendientes para completar el microservicio
+Almacena la información principal de los incidentes, incluyendo:
 
-### 1. Implementar IN-06 e IN-07
+- Identificadores y clave.
+- Título y descripción.
+- Estado, impacto, urgencia y prioridad.
+- Política SLA y fecha de vencimiento.
+- Reportante y responsable.
+- Equipo y CI asociados.
+- Problema relacionado.
+- Fechas de creación y resolución.
 
-- IN-06: listar comentarios de un incidente, con paginación y restricciones de visibilidad.
-- IN-07: agregar comentarios, validando permisos, contenido y estado del incidente.
+**`incident_comments`**
 
-### 2. Configurar los endpoints en `serverless.yml`
+Almacena los comentarios:
 
-Registrar las rutas restantes y vincularlas a sus respectivos handlers con el Lambda Authorizer.
+- `id`
+- `incident_id`
+- `author_id`
+- `body`
+- `internal`
+- `created_at`
 
-Verificar también la configuración de permisos y eventos SQS.
+La columna `incident_id` tiene una clave foránea hacia `incidents`.
 
-### 3. Definir y registrar políticas SLA
+**`incident_events`**
 
-El equipo debe confirmar los valores oficiales de `response_minutes` y `resolution_minutes` para las prioridades P1, P2, P3 y P4.
+Registra el historial de cambios de estado.
 
-Los handlers ya consultan la tabla `sla_policies`, pero necesitan que existan políticas configuradas para crear y recalcular incidentes.
+**`processed_events`**
 
-Los valores deberán registrarse mediante una migración SQL.
+Permite identificar mensajes ya procesados por los consumidores SQS.
 
-### 4. Completar la integración de eventos
+### Migraciones
 
-- Habilitar `ReportBatchItemFailures` para el consumidor SQS.
-- Verificar los permisos y la publicación SNS.
-- Validar los formatos definitivos de los eventos con los microservicios consumidores.
+El archivo `handlers/migrate.py` está preparado para ejecutar `001_init.sql` y `002_events.sql` en orden.
 
-### 5. Validar las migraciones e integración
+**Estado:** las migraciones todavía requieren validación contra una instancia real de PostgreSQL.
 
-- Probar las migraciones en PostgreSQL.
-- Verificar el aislamiento de datos entre tenants.
-- Ejecutar pruebas de integración de los endpoints.
-- Verificar la comunicación con API Gateway, Lambda, RDS, SNS y SQS.
+## 5. Pruebas unitarias
 
-### 6. Tablas pendientes del contrato
+Las pruebas utilizan:
 
-La tabla `incident_attachments` está pendiente de definición e implementación según el alcance del contrato.
+- Python.
+- `unittest`.
+- `unittest.mock`.
+- `MagicMock`.
+- `pytest` como ejecutor.
 
-La tabla `incident_events` ya fue contemplada en `002_events.sql`.
+Las dependencias externas se simulan mediante mocks, por lo que las pruebas no requieren AWS ni PostgreSQL real.
 
-## Observaciones
+### Resultado actual
 
-- El microservicio está en desarrollo y aún no se ha desplegado.
-- Las 62 pruebas exitosas son unitarias y utilizan mocks.
-- Las migraciones nuevas todavía no se han validado en una base de datos real.
-- Las políticas SLA oficiales siguen pendientes de aprobación.
-- Los contratos del equipo corresponden a la propuesta `v0.9`.
+**90 pruebas unitarias aprobadas**, confirmadas mediante una ejecución local completa el 20 de noviembre de 2026.
+
+Las pruebas incluyen:
+
+- Listado, creación y consulta de incidentes.
+- Actualización y cambios de estado.
+- Validación de permisos.
+- Cálculo de prioridad y políticas SLA.
+- Transacciones y manejo de errores.
+- Publicación de eventos.
+- Procesamiento de mensajes SQS.
+- Paginación y privacidad de comentarios.
+- Creación de comentarios públicos e internos.
+
+De las pruebas nuevas:
+
+| Endpoint | Pruebas agregadas |
+|---|---:|
+| IN-06 · Listar comentarios | 12 |
+| IN-07 · Agregar comentarios | 18 |
+
+### Ejecutar todas las pruebas
+
+Desde la raíz del repositorio:
+
+```powershell
+python -m pytest services/incidents/tests/ -v
+```
+
+Resultado de la última ejecución local:
+
+```text
+90 passed
+```
+
+### Ejecutar únicamente IN-06
+
+```powershell
+python -m pytest services/incidents/tests/test_incidents.py::TestListIncidentComments -v
+```
+
+### Ejecutar únicamente IN-07
+
+```powershell
+python -m pytest services/incidents/tests/test_incidents.py::TestAddIncidentComment -v
+```
+
+## 6. Estructura del microservicio
+
+```text
+services/incidents/
+├── handlers/
+│   ├── incidents.py
+│   ├── consumers.py
+│   └── migrate.py
+├── migrations/
+│   ├── 001_init.sql
+│   └── 002_events.sql
+├── tests/
+│   └── ...
+├── serverless.yml
+└── README.md
+```
+
+- `incidents.py`: lógica HTTP de los siete endpoints.
+- `consumers.py`: consumidor SQS de eventos `CIStatusChanged`.
+- `migrate.py`: ejecución de migraciones.
+- `migrations/`: definiciones SQL.
+- `tests/`: pruebas unitarias.
+- `serverless.yml`: configuración de infraestructura y despliegue.
+
+## 7. Pendientes antes de completar la integración
+
+### Backend
+
+- Revisar la lógica de los siete endpoints y detectar casos límite que las pruebas con mocks no cubren.
+- Confirmar y registrar las políticas SLA oficiales.
+- Validar las migraciones contra PostgreSQL real.
+- Revisar las necesidades de la tabla `incident_attachments`, pendiente de definición e implementación según el alcance acordado.
+- Verificar la consistencia de los contratos de eventos entre microservicios.
+- Completar y probar los consumidores adicionales que requiera la integración con otros servicios.
+
+### Equipo de infraestructura e integración
+
+- Configurar las rutas HTTP pendientes en `serverless.yml`.
+- Vincular los handlers con el Lambda Authorizer.
+- Desplegar las funciones Lambda.
+- Verificar conexiones a RDS.
+- Configurar y validar la comunicación SNS/SQS.
+- Habilitar `ReportBatchItemFailures`.
+- Ejecutar pruebas de integración y extremo a extremo.
+
+La configuración de Serverless y AWS se realiza por el equipo responsable de infraestructura, de forma separada al desarrollo de la lógica Python.
+
+## 8. Observaciones
+
+- Los siete endpoints de `ms-incidents` están implementados a nivel de lógica Python.
+- Se aprobaron **90 pruebas unitarias**.
+- IN-06 e IN-07 están implementados y probados con mocks.
+- El consumidor SQS `CIStatusChanged` está implementado.
+- Las migraciones todavía requieren validación en PostgreSQL real.
+- Las políticas SLA oficiales siguen pendientes.
+- El microservicio aún no cuenta con una validación de despliegue completo.
+- Los contratos del proyecto corresponden a la propuesta `v0.9`.
+
+## 9. Resumen final
+
+| Componente | Estado |
+|---|---|
+| Endpoints IN-01 a IN-07 | 7 de 7 implementados |
+| Pruebas unitarias | 90 aprobadas |
+| Comentarios públicos e internos | Implementados |
+| Permisos y aislamiento por tenant | Probados unitariamente |
+| Consumidor `CIStatusChanged` | Implementado |
+| Migraciones SQL | Preparadas |
+| Integración AWS | Pendiente |
+| Políticas SLA oficiales | Pendientes |
+
+**Estado del microservicio:** lógica principal implementada y probada unitariamente. Pendiente de validación de base de datos, configuración de infraestructura y pruebas de integración.

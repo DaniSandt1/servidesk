@@ -57,7 +57,6 @@ def api_error(code, message, status=400, details=None, context=None):
 
     return ok({"error": result}, status)
 
-
 def serialize_incident(incident):
     """Convierte UUID y fechas al formato JSON del contrato."""
     result = {}
@@ -80,8 +79,6 @@ def serialize_incident(incident):
             result[key] = value
 
     return result
-
-
 
 def listIncidents(event, context):
     ctx = tenant_ctx(event)
@@ -320,8 +317,6 @@ def listIncidents(event, context):
             ),
         },
     })
-
-
 
 def createIncident(event, context):
     # 1. Obtener el contexto del usuario autenticado
@@ -624,7 +619,6 @@ def createIncident(event, context):
     return ok({
         "data": serialize_incident(incident)
     }, 201)
-
 
 def getIncident(event, context):
     """IN-03: GET /incidents/{id}."""
@@ -999,7 +993,6 @@ def updateIncident(event, context):
         "data": serialize_incident(updated)
     })
 
-
 def changeIncidentStatus(event, context):
     """IN-05: PUT /incidents/{id}/status."""
 
@@ -1291,3 +1284,385 @@ def changeIncidentStatus(event, context):
     return ok({
         "data": serialize_incident(updated)
     })
+
+def listIncidentComments(event, context):
+    """IN-06: GET /incidents/{id}/comments."""
+
+    ctx = tenant_ctx(event)
+    role = ctx["role"]
+    user_id = ctx["user_id"]
+
+    # 1. Verificar permisos
+    if role not in ("admin", "agent", "customer"):
+        return api_error(
+            "FORBIDDEN",
+            "No tienes permiso para consultar comentarios",
+            403,
+            context=context,
+        )
+
+    # 2. Validar el ID del incidente
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        incident_id = str(
+            uuid.UUID(path_params.get("id"))
+        )
+    except (ValueError, TypeError, AttributeError):
+        return api_error(
+            "VALIDATION_ERROR",
+            "El ID del incidente debe ser un UUID válido",
+            400,
+            context=context,
+        )
+
+    # 3. Validar paginación
+    query = event.get("queryStringParameters") or {}
+
+    try:
+        page = int(query.get("page", "1"))
+        limit = int(query.get("limit", "20"))
+    except (ValueError, TypeError):
+        return api_error(
+            "VALIDATION_ERROR",
+            "page y limit deben ser enteros",
+            400,
+            context=context,
+        )
+
+    if page < 1 or not 1 <= limit <= 100:
+        return api_error(
+            "VALIDATION_ERROR",
+            "page debe ser >= 1 y limit entre 1 y 100",
+            400,
+            context=context,
+        )
+
+    # 4. Conectar al schema autenticado
+    conn = tenant_conn(ctx["schema"])
+
+    # 5. Verificar existencia y acceso al incidente
+    incident_params = {
+        "incident_id": incident_id,
+    }
+
+    incident_sql = """
+        SELECT id
+        FROM incidents
+        WHERE id = :incident_id
+    """
+
+    # Customer solamente puede acceder a sus incidentes
+    if role == "customer":
+        try:
+            incident_params["reporter_id"] = str(
+                uuid.UUID(str(user_id))
+            )
+        except (ValueError, TypeError, AttributeError):
+            return api_error(
+                "FORBIDDEN",
+                "Usuario autenticado inválido",
+                403,
+                context=context,
+            )
+
+        incident_sql += (
+            " AND reporter_id = :reporter_id"
+        )
+
+    incident_rows = conn.run(
+        incident_sql,
+        **incident_params,
+    )
+
+    if not incident_rows:
+        return api_error(
+            "NOT_FOUND",
+            "Incidente no encontrado",
+            404,
+            context=context,
+        )
+
+    # 6. Preparar filtros de comentarios
+    params = {
+        "incident_id": incident_id,
+    }
+
+    where_sql = """
+        WHERE incident_id = :incident_id
+    """
+
+    # Los comentarios internos no son visibles al customer
+    if role == "customer":
+        where_sql += " AND internal = FALSE"
+
+    # 7. Contar los comentarios visibles
+    count_rows = conn.run(
+        "SELECT COUNT(*) FROM incident_comments "
+        + where_sql,
+        **params,
+    )
+
+    total = count_rows[0][0]
+
+    # 8. Consultar la página solicitada
+    offset = (page - 1) * limit
+
+    rows = conn.run(
+        """
+        SELECT
+            id,
+            incident_id,
+            author_id,
+            body,
+            internal,
+            created_at
+        FROM incident_comments
+        """
+        + where_sql
+        + """
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit OFFSET :offset
+        """,
+        **params,
+        limit=limit,
+        offset=offset,
+    )
+
+    columns = [
+        column["name"]
+        for column in conn.columns
+    ]
+
+    comments = [
+        serialize_incident(dict(zip(columns, row)))
+        for row in rows
+    ]
+
+    # 9. Responder según IN-06
+    return ok({
+        "data": comments,
+        "meta": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (
+                (total + limit - 1) // limit
+            ),
+        },
+    })
+
+def addIncidentComment(event, context):
+    """IN-07: POST /incidents/{id}/comments."""
+
+    ctx = tenant_ctx(event)
+    role = ctx["role"]
+
+    # 1. Validar permisos
+    if role not in ("admin", "agent", "customer"):
+        return api_error(
+            "FORBIDDEN",
+            "No tienes permiso para agregar comentarios",
+            403,
+            context=context,
+        )
+
+    # 2. Validar UUID del incidente
+    path_params = event.get("pathParameters") or {}
+
+    try:
+        incident_id = str(
+            uuid.UUID(path_params.get("id"))
+        )
+    except (ValueError, TypeError, AttributeError):
+        return api_error(
+            "VALIDATION_ERROR",
+            "El ID del incidente debe ser un UUID válido",
+            400,
+            context=context,
+        )
+
+    # 3. Leer JSON
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (ValueError, TypeError):
+        return api_error(
+            "VALIDATION_ERROR",
+            "JSON inválido",
+            400,
+            context=context,
+        )
+
+    if not isinstance(body, dict):
+        return api_error(
+            "VALIDATION_ERROR",
+            "El body debe ser un objeto JSON",
+            400,
+            context=context,
+        )
+
+    # 4. Rechazar campos desconocidos
+    unknown = set(body) - {"body", "internal"}
+
+    if unknown:
+        return api_error(
+            "VALIDATION_ERROR",
+            "Campos no permitidos: "
+            + ", ".join(sorted(unknown)),
+            400,
+            context=context,
+        )
+
+    # 5. Validar contenido
+    comment_body = body.get("body")
+
+    if not isinstance(comment_body, str):
+        return api_error(
+            "VALIDATION_ERROR",
+            "body debe ser texto de 1 a 5000 caracteres",
+            400,
+            context=context,
+        )
+
+    comment_body = comment_body.strip()
+
+    if not 1 <= len(comment_body) <= 5000:
+        return api_error(
+            "VALIDATION_ERROR",
+            "body debe tener entre 1 y 5000 caracteres",
+            400,
+            context=context,
+        )
+
+    # 6. Validar indicador de comentario interno
+    internal = body.get("internal", False)
+
+    if not isinstance(internal, bool):
+        return api_error(
+            "VALIDATION_ERROR",
+            "internal debe ser un booleano",
+            400,
+            context=context,
+        )
+
+    if role == "customer" and internal:
+        return api_error(
+            "VALIDATION_ERROR",
+            "Un customer no puede crear comentarios internos",
+            400,
+            context=context,
+        )
+
+    # 7. Validar UUID del autor autenticado
+    try:
+        author_id = str(
+            uuid.UUID(str(ctx["user_id"]))
+        )
+    except (ValueError, TypeError, AttributeError):
+        return api_error(
+            "INTERNAL_ERROR",
+            "Contexto de usuario inválido",
+            500,
+            context=context,
+        )
+
+    # 8. Conectar al schema del tenant
+    conn = tenant_conn(ctx["schema"])
+    transaction_started = False
+
+    try:
+        conn.run("BEGIN")
+        transaction_started = True
+
+        # 9. Buscar y bloquear el incidente
+        params = {"incident_id": incident_id}
+
+        sql = """
+            SELECT status
+            FROM incidents
+            WHERE id = :incident_id
+        """
+
+        if role == "customer":
+            sql += " AND reporter_id = :reporter_id"
+            params["reporter_id"] = author_id
+
+        sql += " FOR UPDATE"
+
+        rows = conn.run(sql, **params)
+
+        if not rows:
+            conn.run("ROLLBACK")
+            transaction_started = False
+
+            return api_error(
+                "NOT_FOUND",
+                "Incidente no encontrado",
+                404,
+                context=context,
+            )
+
+        # 10. No permitir comentarios en incidentes cerrados
+        current_status = rows[0][0]
+
+        if current_status == "closed":
+            conn.run("ROLLBACK")
+            transaction_started = False
+
+            return api_error(
+                "CONFLICT",
+                "No se puede comentar un incidente cerrado",
+                409,
+                context=context,
+            )
+
+        # 11. Insertar comentario
+        rows = conn.run(
+            """
+            INSERT INTO incident_comments (
+                incident_id,
+                author_id,
+                body,
+                internal
+            )
+            VALUES (
+                :incident_id,
+                :author_id,
+                :body,
+                :internal
+            )
+            RETURNING
+                id,
+                incident_id,
+                author_id,
+                body,
+                internal,
+                created_at
+            """,
+            incident_id=incident_id,
+            author_id=author_id,
+            body=comment_body,
+            internal=internal,
+        )
+
+        columns = [
+            column["name"]
+            for column in conn.columns
+        ]
+
+        comment = dict(zip(columns, rows[0]))
+
+        # 12. Confirmar transacción
+        conn.run("COMMIT")
+        transaction_started = False
+
+    except Exception:
+        if transaction_started:
+            conn.run("ROLLBACK")
+        raise
+
+    # 13. Respuesta IN-07
+    return ok({
+        "data": serialize_incident(comment)
+    }, 201)
+
