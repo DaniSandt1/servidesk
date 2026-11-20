@@ -47,7 +47,6 @@ if "common.events" not in sys.modules:
 
 from handlers import incidents
 
-
 class TestIncidents(unittest.TestCase):
 
     def setUp(self):
@@ -1598,3 +1597,676 @@ class TestIncidents(unittest.TestCase):
         )
 
         self.mock_publish.assert_not_called()
+
+class TestListIncidentComments(unittest.TestCase):
+    """Pruebas de IN-06: GET /incidents/{id}/comments."""
+
+    def setUp(self):
+        self.incident_id = (
+            "550e8400-e29b-41d4-a716-446655440000"
+        )
+        self.user_id = (
+            "550e8400-e29b-41d4-a716-446655440001"
+        )
+
+        self.event = {
+            "requestContext": {
+                "authorizer": {
+                    "lambda": {
+                        "tenant_id": "andina",
+                        "schema": "tenant_andina",
+                        "role": "agent",
+                        "user_id": self.user_id,
+                    }
+                }
+            },
+            "pathParameters": {
+                "id": self.incident_id,
+            },
+            "queryStringParameters": None,
+        }
+
+        self.incident_exists = True
+
+        self.comments = [
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440010",
+                "incident_id": self.incident_id,
+                "author_id": self.user_id,
+                "body": "Estamos investigando",
+                "internal": False,
+                "created_at": "2026-11-05T08:25:13Z",
+            },
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "incident_id": self.incident_id,
+                "author_id": self.user_id,
+                "body": "Nota interna del agente",
+                "internal": True,
+                "created_at": "2026-11-05T08:30:13Z",
+            },
+        ]
+
+        self.mock_conn = MagicMock()
+
+        def fake_run(sql, **params):
+            query = sql.strip()
+
+            # Consultar existencia del incidente
+            if (
+                "FROM incidents" in query
+                and "FROM incident_comments" not in query
+            ):
+                if self.incident_exists:
+                    return [(self.incident_id,)]
+                return []
+
+            # Filtrar los comentarios visibles
+            visible = self.comments
+
+            if "internal = FALSE" in query:
+                visible = [
+                    c for c in visible
+                    if not c["internal"]
+                ]
+
+            # Contar comentarios
+            if "SELECT COUNT(*)" in query:
+                return [(len(visible),)]
+
+            # Obtener comentarios paginados
+            if "FROM incident_comments" in query:
+                self.mock_conn.columns = [
+                    {"name": name}
+                    for name in (
+                        "id",
+                        "incident_id",
+                        "author_id",
+                        "body",
+                        "internal",
+                        "created_at",
+                    )
+                ]
+
+                offset = params["offset"]
+                limit = params["limit"]
+
+                selected = visible[offset:offset + limit]
+
+                return [
+                    tuple(comment.values())
+                    for comment in selected
+                ]
+
+            raise AssertionError(
+                f"Consulta SQL inesperada: {query}"
+            )
+
+        self.mock_conn.run.side_effect = fake_run
+
+        self.db_patch = patch.object(
+            incidents,
+            "tenant_conn",
+            return_value=self.mock_conn,
+        )
+
+        self.mock_db = self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+
+    def ejecutar(self):
+        return incidents.listIncidentComments(
+            self.event, None
+        )
+
+    def consultas(self, fragment):
+        return [
+            call
+            for call in self.mock_conn.run.call_args_list
+            if fragment in call.args[0]
+        ]
+
+    # TEST 1
+    def test_listar_comentarios(self):
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        body = json.loads(response["body"])
+
+        self.assertEqual(len(body["data"]), 2)
+        self.assertEqual(body["meta"]["total"], 2)
+        self.assertEqual(body["meta"]["page"], 1)
+        self.assertEqual(body["meta"]["limit"], 20)
+
+    # TEST 2
+    def test_admin_ve_comentarios_internos(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "admin"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        data = json.loads(response["body"])["data"]
+
+        self.assertEqual(len(data), 2)
+        self.assertTrue(data[1]["internal"])
+
+    # TEST 3
+    def test_customer_solo_comentarios_publicos(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "customer"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        body = json.loads(response["body"])
+
+        self.assertEqual(len(body["data"]), 1)
+        self.assertEqual(body["meta"]["total"], 1)
+        self.assertFalse(body["data"][0]["internal"])
+
+        consultas = self.consultas(
+            "FROM incident_comments"
+        )
+
+        self.assertTrue(
+            all(
+                "internal = FALSE" in call.args[0]
+                for call in consultas
+            )
+        )
+
+    # TEST 4
+    def test_customer_solo_incidentes_propios(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "customer"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        consulta = self.consultas(
+            "FROM incidents"
+        )[0]
+
+        self.assertIn(
+            "reporter_id = :reporter_id",
+            consulta.args[0],
+        )
+
+        self.assertEqual(
+            consulta.kwargs["reporter_id"],
+            self.user_id,
+        )
+
+    # TEST 5
+    def test_incidente_no_existe(self):
+        self.incident_exists = False
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 404)
+
+        self.assertEqual(
+            len(self.consultas("FROM incident_comments")),
+            0,
+        )
+
+    # TEST 6
+    def test_uuid_invalido(self):
+        self.event["pathParameters"]["id"] = "INC-001"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 7
+    def test_rol_no_autorizado(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "guest"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 403)
+        self.mock_db.assert_not_called()
+
+    # TEST 8
+    def test_paginacion(self):
+        self.event["queryStringParameters"] = {
+            "page": "2",
+            "limit": "1",
+        }
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        body = json.loads(response["body"])
+
+        self.assertEqual(len(body["data"]), 1)
+        self.assertEqual(body["meta"]["page"], 2)
+        self.assertEqual(body["meta"]["limit"], 1)
+        self.assertEqual(body["meta"]["total_pages"], 2)
+
+        self.assertEqual(
+            body["data"][0]["body"],
+            "Nota interna del agente",
+        )
+
+    # TEST 9
+    def test_pagina_invalida(self):
+        self.event["queryStringParameters"] = {
+            "page": "0",
+        }
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 10
+    def test_limit_invalido(self):
+        self.event["queryStringParameters"] = {
+            "limit": "101",
+        }
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 11
+    def test_comentarios_vacios(self):
+        self.comments = []
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        body = json.loads(response["body"])
+
+        self.assertEqual(body["data"], [])
+        self.assertEqual(body["meta"]["total"], 0)
+        self.assertEqual(body["meta"]["total_pages"], 0)
+
+    # TEST 12
+    def test_aislamiento_tenant(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["schema"] = "tenant_pacifico"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 200)
+
+        self.mock_db.assert_called_once_with(
+            "tenant_pacifico"
+        )
+
+class TestAddIncidentComment(unittest.TestCase):
+    """Pruebas IN-07: POST /incidents/{id}/comments."""
+
+    def setUp(self):
+        self.incident_id = (
+            "550e8400-e29b-41d4-a716-446655440000"
+        )
+        self.user_id = (
+            "550e8400-e29b-41d4-a716-446655440001"
+        )
+        self.comment_id = (
+            "550e8400-e29b-41d4-a716-446655440010"
+        )
+
+        self.event = {
+            "requestContext": {
+                "authorizer": {
+                    "lambda": {
+                        "tenant_id": "andina",
+                        "schema": "tenant_andina",
+                        "role": "agent",
+                        "user_id": self.user_id,
+                    }
+                }
+            },
+            "pathParameters": {
+                "id": self.incident_id,
+            },
+            "body": json.dumps({
+                "body": "Estamos revisando el incidente",
+                "internal": False,
+            }),
+        }
+
+        self.current_status = "in_progress"
+        self.incident_exists = True
+        self.insert_error = False
+
+        self.mock_conn = MagicMock()
+
+        def fake_run(sql, **params):
+            query = sql.strip()
+
+            if query in ("BEGIN", "COMMIT", "ROLLBACK"):
+                return []
+
+            if (
+                "FROM incidents" in query
+                and "FOR UPDATE" in query
+            ):
+                if not self.incident_exists:
+                    return []
+
+                return [(self.current_status,)]
+
+            if "INSERT INTO incident_comments" in query:
+                if self.insert_error:
+                    raise RuntimeError(
+                        "Error simulado de PostgreSQL"
+                    )
+
+                self.mock_conn.columns = [
+                    {"name": name}
+                    for name in (
+                        "id",
+                        "incident_id",
+                        "author_id",
+                        "body",
+                        "internal",
+                        "created_at",
+                    )
+                ]
+
+                return [(
+                    self.comment_id,
+                    params["incident_id"],
+                    params["author_id"],
+                    params["body"],
+                    params["internal"],
+                    "2026-11-05T08:25:13Z",
+                )]
+
+            raise AssertionError(
+                f"Consulta SQL inesperada: {query}"
+            )
+
+        self.mock_conn.run.side_effect = fake_run
+
+        self.db_patch = patch.object(
+            incidents,
+            "tenant_conn",
+            return_value=self.mock_conn,
+        )
+
+        self.mock_db = self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+
+    def ejecutar(self):
+        return incidents.addIncidentComment(
+            self.event, None
+        )
+
+    def consultas(self, fragment):
+        return [
+            call
+            for call in self.mock_conn.run.call_args_list
+            if fragment in call.args[0]
+        ]
+
+    # TEST 1
+    def test_agregar_comentario_exitosamente(self):
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        data = json.loads(response["body"])["data"]
+
+        self.assertEqual(data["id"], self.comment_id)
+        self.assertEqual(
+            data["body"],
+            "Estamos revisando el incidente",
+        )
+        self.assertFalse(data["internal"])
+
+        self.assertEqual(len(self.consultas("BEGIN")), 1)
+        self.assertEqual(len(self.consultas("COMMIT")), 1)
+        self.assertEqual(
+            len(self.consultas("INSERT INTO incident_comments")),
+            1,
+        )
+
+    # TEST 2
+    def test_comentario_interno_de_agente(self):
+        self.event["body"] = json.dumps({
+            "body": "Nota interna del equipo",
+            "internal": True,
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        data = json.loads(response["body"])["data"]
+        self.assertTrue(data["internal"])
+
+    # TEST 3
+    def test_internal_por_defecto_false(self):
+        self.event["body"] = json.dumps({
+            "body": "Comentario público",
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        insertion = self.consultas(
+            "INSERT INTO incident_comments"
+        )[0]
+
+        self.assertFalse(insertion.kwargs["internal"])
+
+    # TEST 4
+    def test_customer_puede_comentar_su_incidente(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "customer"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        query = self.consultas("FROM incidents")[0]
+
+        self.assertIn(
+            "reporter_id = :reporter_id",
+            query.args[0],
+        )
+
+        self.assertEqual(
+            query.kwargs["reporter_id"],
+            self.user_id,
+        )
+
+    # TEST 5
+    def test_customer_no_puede_comentar_incidente_ajeno(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "customer"
+
+        self.incident_exists = False
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 404)
+
+        self.assertEqual(
+            len(self.consultas("INSERT INTO incident_comments")),
+            0,
+        )
+
+    # TEST 6
+    def test_customer_no_puede_crear_comentario_interno(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "customer"
+
+        self.event["body"] = json.dumps({
+            "body": "Comentario interno",
+            "internal": True,
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 7
+    def test_no_comentar_incidente_cerrado(self):
+        self.current_status = "closed"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 409)
+        self.assertEqual(len(self.consultas("ROLLBACK")), 1)
+        self.assertEqual(len(self.consultas("COMMIT")), 0)
+        self.assertEqual(
+            len(self.consultas("INSERT INTO incident_comments")),
+            0,
+        )
+
+    # TEST 8
+    def test_incidente_no_existe(self):
+        self.incident_exists = False
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 404)
+        self.assertEqual(len(self.consultas("ROLLBACK")), 1)
+
+    # TEST 9
+    def test_uuid_invalido(self):
+        self.event["pathParameters"]["id"] = "INC-001"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 10
+    def test_body_vacio(self):
+        self.event["body"] = json.dumps({
+            "body": "    ",
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 11
+    def test_body_supera_5000_caracteres(self):
+        self.event["body"] = json.dumps({
+            "body": "A" * 5001,
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 12
+    def test_internal_no_booleano(self):
+        self.event["body"] = json.dumps({
+            "body": "Comentario válido",
+            "internal": "true",
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 13
+    def test_campos_no_permitidos(self):
+        self.event["body"] = json.dumps({
+            "body": "Comentario válido",
+            "author_id": self.user_id,
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 14
+    def test_json_invalido(self):
+        self.event["body"] = "{incorrecto}"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 400)
+        self.mock_db.assert_not_called()
+
+    # TEST 15
+    def test_rol_no_autorizado(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["role"] = "guest"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 403)
+        self.mock_db.assert_not_called()
+
+    # TEST 16
+    def test_rollback_si_falla_postgresql(self):
+        self.insert_error = True
+
+        with self.assertRaises(RuntimeError):
+            self.ejecutar()
+
+        self.assertEqual(len(self.consultas("BEGIN")), 1)
+        self.assertEqual(len(self.consultas("ROLLBACK")), 1)
+        self.assertEqual(len(self.consultas("COMMIT")), 0)
+
+    # TEST 17
+    def test_aislamiento_por_tenant(self):
+        self.event["requestContext"]["authorizer"][
+            "lambda"
+        ]["schema"] = "tenant_pacifico"
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        self.mock_db.assert_called_once_with(
+            "tenant_pacifico"
+        )
+
+    # TEST 18
+    def test_autor_se_obtiene_del_token(self):
+        self.event["body"] = json.dumps({
+            "body": "Comentario válido",
+        })
+
+        response = self.ejecutar()
+
+        self.assertEqual(response["statusCode"], 201)
+
+        insertion = self.consultas(
+            "INSERT INTO incident_comments"
+        )[0]
+
+        self.assertEqual(
+            insertion.kwargs["author_id"],
+            self.user_id,
+        )
+
+
+
