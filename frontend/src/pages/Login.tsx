@@ -20,7 +20,9 @@ export default function Login() {
   const [error, setError] = useState<string | null>(params.get('expired') ? 'Tu sesión expiró. Inicia sesión de nuevo.' : null);
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [resetDone, setResetDone] = useState(false);
-  const showDemo = MOCKED_SERVICES.includes('identity');
+  const mockedIdentity = MOCKED_SERVICES.includes('identity');
+  // Las cuentas demo también existen en el backend real (migración de ms-identity y seed).
+  const showDemo = mockedIdentity || import.meta.env.VITE_SHOW_DEMO_ACCOUNTS === 'true';
 
   if (user) return <Navigate to="/app" replace />;
 
@@ -112,18 +114,20 @@ export default function Login() {
                 <span className="muted">
                   Contraseña: <span className="mono">{demoTenant.password}</span>
                 </span>
-                <button
-                  type="button"
-                  className="link-btn"
-                  style={{ fontSize: 12 }}
-                  onClick={() => {
-                    resetDemoData();
-                    setError(null);
-                    setResetDone(true);
-                  }}
-                >
-                  {resetDone ? 'Datos restablecidos ✓' : 'Restablecer datos de demo'}
-                </button>
+                {mockedIdentity && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    style={{ fontSize: 12 }}
+                    onClick={() => {
+                      resetDemoData();
+                      setError(null);
+                      setResetDone(true);
+                    }}
+                  >
+                    {resetDone ? 'Datos restablecidos ✓' : 'Restablecer datos de demo'}
+                  </button>
+                )}
               </div>
             </div>
           )}

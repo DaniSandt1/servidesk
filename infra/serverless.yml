@@ -40,6 +40,24 @@ functions:
       patterns:
         - "authorizer/**"
 
+  # Carga los datos ficticios (seed/generate.py) desde el bucket S3 de seed a RDS con COPY.
+  # Se invoca con seed/load.py: {"action": "load"|"count", "service": "...", "tenant": "..."}
+  seedLoader:
+    handler: seed_loader/handler.handle
+    timeout: 900
+    memorySize: 1024
+    layers:
+      - { Ref: CommonLambdaLayer }
+    environment:
+      DB_HOST: !GetAtt Database.Endpoint.Address
+      DB_USER: servidesk_admin
+      DB_PASSWORD: ${env:DB_PASSWORD}
+      SEED_BUCKET: !Ref SeedBucket
+    package:
+      patterns:
+        - "seed_loader/**"
+        - "!**/__pycache__/**"
+
 resources:
   Resources:
     # ---------- Eventos ----------

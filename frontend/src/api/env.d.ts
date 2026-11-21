@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_API_REQUESTS_URL: string;
   /** "true" fuerza el simulador en todos los servicios (src/mocks). */
   readonly VITE_USE_MOCKS?: string;
+  /** "true" muestra los botones de cuentas demo en el login aunque se use el backend real. */
+  readonly VITE_SHOW_DEMO_ACCOUNTS?: string;
 }
 
 interface ImportMeta {
