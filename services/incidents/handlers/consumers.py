@@ -29,6 +29,10 @@ def on_ci_status_changed(event, context):
             event_id = str(uuid.UUID(msg["eventId"]))
             tenant_id = msg["tenantId"]
             ci_id = str(uuid.UUID(msg["data"]["ciId"]))
+            ci_name = msg["data"].get("name") or ci_id
+            # Quien marcó el CI como caído figura como reportante (null si fue el sistema)
+            actor = msg["data"].get("actorId")
+            reporter_id = str(uuid.UUID(actor)) if actor else None
 
             # 4. Conectarse al schema del tenant
             conn = tenant_conn(f"tenant_{tenant_id}")
@@ -118,11 +122,14 @@ def on_ci_status_changed(event, context):
                     title,
                     description,
                     status,
+                    impact,
+                    urgency,
                     priority,
                     sla_policy_id,
                     sla_due_at,
                     sla_breached,
                     ci_id,
+                    reporter_id,
                     channel,
                     created_at
                 )
@@ -131,6 +138,8 @@ def on_ci_status_changed(event, context):
                     :title,
                     :description,
                     'new',
+                    'high',
+                    'medium',
                     'P2',
                     :sla_policy_id,
                     (
@@ -139,6 +148,7 @@ def on_ci_status_changed(event, context):
                     ),
                     FALSE,
                     :ci_id,
+                    CAST(:reporter_id AS uuid),
                     'auto',
                     CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
                 )
@@ -146,14 +156,16 @@ def on_ci_status_changed(event, context):
                           ci_id, channel
                 """,
                 key=incident_key,
-                title=f"CI caído: {ci_id}",
+                title=f"[Automático] {ci_name} dejó de responder"[:200],
                 description=(
-                    f"Se detectó automáticamente que el CI "
-                    f"{ci_id} cambió a estado down."
+                    "ServiDesk detectó que este equipo o sistema "
+                    "dejó de responder y abrió el reporte "
+                    f"automáticamente (CI {ci_id})."
                 ),
                 sla_policy_id=sla_policy_id,
                 resolution_minutes=resolution_minutes,
                 ci_id=ci_id,
+                reporter_id=reporter_id,
             )
 
             cols = [c["name"] for c in conn.columns]
@@ -175,7 +187,7 @@ def on_ci_status_changed(event, context):
                     "ciId": ci_id,
                     "teamId": None,
                     "assigneeId": None,
-                    "reporterId": None,
+                    "reporterId": reporter_id,
                     "channel": "auto",
                     "actorId": None,
                 },

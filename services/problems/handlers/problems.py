@@ -639,6 +639,10 @@ def getProblem(event, context):
             field: serialize(value)
             for field, value in known_error.items()
         }
+        # El frontend (KnownError.published_at) usa la fecha de publicación
+        problem_detail["known_error"]["published_at"] = (
+            problem_detail["known_error"].get("created_at")
+        )
     else:
         problem_detail["known_error"] = None
 

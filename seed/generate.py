@@ -375,8 +375,12 @@ def generate_tenant(tenant, n, now, writer):
     incidents = []
     created_list = sorted(recent_time(rng, now, 365) for _ in range(n))
     for k, created in enumerate(created_list, start=1):
-        impact = weighted(rng, [("high", 2), ("medium", 5), ("low", 3)])
-        urgency = weighted(rng, [("high", 3), ("medium", 5), ("low", 2)])
+        channel = weighted(rng, [("portal", 80), ("email", 15), ("auto", 5)])
+        if channel == "auto":  # igual que incidents-ci-q: P2 (alto x media)
+            impact, urgency = "high", "medium"
+        else:
+            impact = weighted(rng, [("high", 2), ("medium", 5), ("low", 3)])
+            urgency = weighted(rng, [("high", 3), ("medium", 5), ("low", 2)])
         priority = PRIORITY[(impact, urgency)]
         age = now - created
         if age < 2 * D:
@@ -390,11 +394,11 @@ def generate_tenant(tenant, n, now, writer):
         if status in ("resolved", "closed"):
             resolved = min(now, created + dt.timedelta(minutes=rng.randint(20, int(SLA_HOURS[priority] * 60 * 1.6))))
         breached = (resolved > due) if resolved else (now > due)
-        channel = weighted(rng, [("portal", 80), ("email", 15), ("auto", 5)])
         team = rng.choice(team_ids)
         assignee = None if status == "new" and rng.random() < 0.6 else (
             demo_agent if rng.random() < 0.05 else rng.choice(team_members_of.get(team) or agents))
-        reporter = None if channel == "auto" else (demo_customer if k % 23 == 0 else rng.choice(customers))
+        # en los automáticos reporta quien marcó el CI como caído (personal de TI)
+        reporter = rng.choice(staff) if channel == "auto" else (demo_customer if k % 23 == 0 else rng.choice(customers))
         ci = rng.choice(active_cis)[0] if (channel == "auto" or rng.random() < 0.7) else None
         title = (f"[Automático] {ci_name[ci]} dejó de responder" if channel == "auto"
                  else fill(rng, rng.choice(INCIDENT_TITLES), apps))
