@@ -23,3 +23,14 @@ Proyecto final de Cloud Computing. Monorepo con:
    `npx serverless identity:invoke --function migrate` y luego igual para cmdb, incidents, problems, changes y requests.
 6. Probar el login con una cuenta demo (ver `services/identity/README.md`), por ejemplo
    `andina` / `lucia.paredes@andina.pe` / `Andina#2026`.
+
+Atajos (usan `~/.aws/credentials`):
+
+| Paso | Comando |
+| --- | --- |
+| URLs de las 6 APIs + `frontend/.env.local` | `python scripts/aws_check.py urls` |
+| Migraciones en orden (identity primero) | `python scripts/aws_check.py migrate` |
+| Prueba de humo con 2 tenants (HTTP + eventos SNS/SQS) | `python scripts/aws_check.py smoke` |
+| Datos ficticios: 30 000 por microservicio (S3 → Lambda `seedLoader` → COPY) | `python seed/generate.py` y `python seed/load.py all` |
+| Contrato frontend ↔ APIs desplegadas | `python scripts/frontend_contract.py` |
+| Frontend en Amplify (build + despliegue manual) | `python scripts/deploy_frontend.py` |

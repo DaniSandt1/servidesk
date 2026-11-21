@@ -66,7 +66,7 @@ def cmd_urls(s, args):
     if all(urls.values()):
         lines = [f"VITE_API_{svc.upper()}_URL={url}" for svc, url in urls.items()]
         ENV_LOCAL.write_text("# Generado por scripts/aws_check.py urls\n" + "\n".join(lines) +
-                             "\nVITE_USE_MOCKS=false\n", encoding="utf-8")
+                             "\nVITE_USE_MOCKS=false\nVITE_SHOW_DEMO_ACCOUNTS=true\n", encoding="utf-8")
         print(f"\n  -> {ENV_LOCAL.relative_to(ROOT)} actualizado (no se versiona)")
     return urls
 
