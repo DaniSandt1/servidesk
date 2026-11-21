@@ -6,3 +6,6 @@ Diagrama de arquitectura y ER por microservicio (exportados de mermaid.live / de
 - [openapi.yaml](./openapi.yaml): especificación OpenAPI 3.1 de las 6 APIs.
 - [EVENT_CONTRACTS.md](./EVENT_CONTRACTS.md): eventos SNS/SQS, reintentos, DLQ y duplicados.
 - [INTEGRATION_GUIDE.md](./INTEGRATION_GUIDE.md): cómo integrar frontend y backend.
+
+# Despliegue
+- [DEPLOY.md](./DEPLOY.md): paso a paso para levantar todo el proyecto en tu propia cuenta de AWS Academy.

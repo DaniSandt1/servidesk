@@ -13,6 +13,9 @@ Proyecto final de Cloud Computing. Monorepo con:
 | `docs/` | Diagramas | Vannia |
 
 ## Despliegue (AWS Academy Learner Lab)
+
+> Guía completa paso a paso, para cualquier integrante en su propia cuenta: [docs/DEPLOY.md](docs/DEPLOY.md).
+
 1. Copiar credenciales de *AWS Details* a `~/.aws/credentials` (caducan cada ~4 h).
 2. `cp .env.example .env`, poner claves propias y cargarlas en la terminal:
    - Mac/Linux: `set -a; source .env; set +a`
