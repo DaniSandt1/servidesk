@@ -4,7 +4,7 @@ Guía para levantar el proyecto completo (backend, datos y frontend) desde cero 
 Tiempo total: unos 30–40 minutos, de los cuales ~15 son de espera mientras se crea RDS.
 
 Al terminar tendrás en tu cuenta: 6 microservicios (API Gateway + Lambda), RDS PostgreSQL con
-30 000 registros por microservicio en 3 tenants, SNS + 8 colas SQS, 3 buckets S3 y el frontend en Amplify.
+30 000 registros por microservicio en 3 tenants, SNS + 7 colas SQS (cada una con su DLQ), 3 buckets S3 y el frontend en Amplify.
 
 > Los comandos están para **PowerShell** (Windows). En Mac/Linux usa la columna o el bloque marcado
 > como *bash* y cambia `python` por `python3`.
