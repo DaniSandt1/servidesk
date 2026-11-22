@@ -100,15 +100,32 @@ def text(p, x, y, w, h, value, size=12, bold=False, color=INK, align="left", val
 
 
 def group(p, x, y, w, h, title, subtitle="", color="#232F3E", fill="#FFFFFF", dashed=False, rounded=True,
-          title_size=13, width=2):
+          title_size=13, width=2, res=None):
+    """Contenedor con título arriba a la izquierda; con res, el ícono del servicio va antes del título
+    (como los grupos "VPC" y "EC2 · …" del proyecto 1)."""
     label = f'<b style="font-size:{title_size}px">{html.escape(title)}</b>'
     if subtitle:
         label += f'<br><span style="font-size:11px;color:{MUTED}">{html.escape(subtitle)}</span>'
-    return p.vertex(x, y, w, h, label,
-                    f"rounded={1 if rounded else 0};arcSize=3;absoluteArcSize=1;html=1;whiteSpace=wrap;"
-                    f"fontFamily={FONT};fontColor={color};strokeColor={color};fillColor={fill};"
-                    f"strokeWidth={width};dashed={1 if dashed else 0};dashPattern=8 6;align=left;verticalAlign=top;"
-                    f"spacingLeft=14;spacingTop=8;container=0;")
+    cid = p.vertex(x, y, w, h, label,
+                   f"rounded={1 if rounded else 0};arcSize=3;absoluteArcSize=1;html=1;whiteSpace=wrap;"
+                   f"fontFamily={FONT};fontColor={color};strokeColor={color};fillColor={fill};"
+                   f"strokeWidth={width};dashed={1 if dashed else 0};dashPattern=8 6;align=left;verticalAlign=top;"
+                   f"spacingLeft={48 if res else 14};spacingTop=8;container=0;")
+    if res:
+        icon(p, x + 12, y + 11, res, color, 26)
+    return cid
+
+
+def component(p, x, y, w, h, title, lines, color, fill="#FFFFFF", title_size=14, line_size=11):
+    """Componente dentro de un grupo: blanco con borde de color, sin ícono (como 'ms-productos :8001')."""
+    body = f'<b style="font-size:{title_size}px;color:{INK}">{html.escape(title)}</b>'
+    if lines:
+        body += f'<br><span style="font-size:{line_size}px;color:{MUTED}">' + \
+                "<br>".join(html.escape(line) for line in lines) + "</span>"
+    return p.vertex(x, y, w, h, body,
+                    f"rounded=1;arcSize=6;html=1;whiteSpace=wrap;fontFamily={FONT};strokeColor={color};"
+                    f"fillColor={fill};strokeWidth=2;align=center;verticalAlign=middle;spacingLeft=8;"
+                    f"spacingRight=8;")
 
 
 def icon(p, x, y, res, color, size=30):
@@ -189,7 +206,7 @@ def architecture():
     # ---------------------------------------------------------------- microservicios
     lam = group(p, 600, 150, 710, 790, "Microservicios — AWS Lambda (Python 3.12)",
                 "6 servicios · 57 funciones (rutas HTTP, consumidores SQS y migrate) · cada uno con su propia base",
-                color=C["compute"][0], fill="#FFFFFF", dashed=True)
+                color=C["compute"][0], fill=C["compute"][1], dashed=True, res="lambda")
     specs = [
         ("ms-identity", ["login JWT (PBKDF2) · usuarios · equipos", "bandeja de notificaciones",
                          "consume identity-notify-q"]),
@@ -204,15 +221,15 @@ def architecture():
     ]
     for i, (title, lines) in enumerate(specs):
         col, row = i % 2, i // 2
-        service(p, 625 + col * 345, 225 + row * 190, 320, 160, title, lines, "compute", "lambda")
-    service(p, 625, 810, 665, 100, "Lambda Layer common",
-            ["pg8000 1.31 · scramp 1.4.5 · PyJWT", "common.db: conexión SSL + SET search_path = schema del tenant",
-             "common.events: publish(eventType, tenantId, data)"], "compute", None)
+        component(p, 625 + col * 345, 230 + row * 185, 320, 150, title, lines, C["compute"][0])
+    component(p, 625, 805, 665, 105, "Lambda Layer common",
+              ["pg8000 1.31 · scramp 1.4.5 · PyJWT", "common.db: conexión SSL + SET search_path = schema del tenant",
+               "common.events: publish(eventType, tenantId, data)"], C["compute"][0])
 
     # ---------------------------------------------------------------- RDS
     rds = group(p, 1370, 150, 540, 600, "Amazon RDS · PostgreSQL 16",
-                "instancia única servidesk-dev · db.t3.micro · SSL obligatorio", color=C["db"][0], fill=C["db"][1])
-    icon(p, 1862, 162, "rds", C["db"][0], 32)
+                "instancia única servidesk-dev · db.t3.micro · SSL obligatorio", color=C["db"][0], fill="#F8F9FE",
+                res="rds")
     for i, key in enumerate(["identity", "cmdb", "incidents", "problems", "changes", "requests"]):
         p.vertex(1395, 222 + i * 78, 490, 66,
                  f'<b style="font-size:13px;color:{INK}">db_{key}</b>'
@@ -220,7 +237,7 @@ def architecture():
                  f'<span style="font-size:11px;color:#3B48CC">tenant_andina │ tenant_pacifico │ tenant_unitec</span>'
                  + ('<span style="font-size:11px;color:#3B48CC"> │ public.tenants</span>' if key == "identity" else ""),
                  f"rounded=1;arcSize=8;html=1;whiteSpace=wrap;fontFamily={FONT};strokeColor=#3B48CC;"
-                 f"fillColor=#FFFFFF;strokeWidth=1.5;align=left;verticalAlign=middle;spacingLeft=12;")
+                 f"fillColor=#EEF0FC;strokeWidth=2;align=left;verticalAlign=middle;spacingLeft=12;")
     text(p, 1395, 692, 500, 50, "Patrón 2 de multi-tenancy: una base por microservicio y un schema por tenant · "
                                 "30 000 registros por microservicio (10 000 por tenant)", 11, color="#3B48CC")
 
@@ -248,7 +265,7 @@ def architecture():
     eda = group(p, 600, 1030, 1310, 480, "Mensajería basada en eventos (EDA)",
                 "Amazon SNS (fan-out con FilterPolicy por eventType) → Amazon SQS: una cola por consumidor con su DLQ "
                 "(maxReceiveCount 3) · ReportBatchItemFailures · idempotencia con processed_events",
-                color=C["appint"][0], fill="#FFFFFF", dashed=True)
+                color=C["appint"][0], fill="#FFF8FB", dashed=True, res="sqs")
     sns = service(p, 625, 1120, 290, 160, "Amazon SNS",
                   ["tópico servidesk-itsm-events-dev", "sobre: eventId · eventType ·", "tenantId · source · data",
                    "suscripciones con FilterPolicy"], "appint", "sns")
@@ -270,7 +287,7 @@ def architecture():
                      f'<span style="font-size:11px;color:{MUTED}">  + DLQ</span><br>'
                      f'<span style="font-size:11px;color:{MUTED}">{html.escape(what)}</span>',
                      f"rounded=1;arcSize=8;html=1;whiteSpace=wrap;fontFamily={FONT};strokeColor={C['appint'][0]};"
-                     f"fillColor={C['appint'][1]};strokeWidth=1.5;align=left;verticalAlign=middle;spacingLeft=50;")
+                     f"fillColor=#FFFFFF;strokeWidth=2;align=left;verticalAlign=middle;spacingLeft=50;")
         icon(p, qx + 10, qy + 23, "sqs", C["appint"][0], 30)
         first_q = first_q or q
     text(p, 1440, 1400, 450, 60, "<b>7 colas + 7 DLQ = 14 colas SQS</b><br>"
