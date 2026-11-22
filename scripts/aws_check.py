@@ -3,7 +3,9 @@
     python scripts/aws_check.py urls      # URLs de las 6 APIs + genera frontend/.env.local
     python scripts/aws_check.py migrate   # ejecuta migrate en los 6 servicios (identity primero)
     python scripts/aws_check.py smoke     # prueba de humo con 2 tenants (HTTP real + eventos SNS/SQS)
-    python scripts/aws_check.py all       # las tres, en orden
+    python scripts/aws_check.py enable    # reactiva las colas SQS -> Lambda (el Learner Lab las desactiva
+                                          # al cerrar la sesión; smoke lo hace solo antes de probar)
+    python scripts/aws_check.py all       # urls + migrate + smoke, en orden
 
 Opciones: --stage dev (por defecto) · --region us-east-1 (por defecto)
 """
@@ -120,7 +122,31 @@ def wait_for(fn, seconds=45, step=3):
         time.sleep(step)
 
 
+def cmd_enable(s, args):
+    """El Learner Lab desactiva los event source mappings (SQS -> Lambda) al terminar la sesión: los
+    eventos quedan esperando en las colas. Reactiva solo los de ServiDesk."""
+    print("== Colas SQS -> Lambda consumidoras (event source mappings)")
+    lam = s.client("lambda")
+    mappings = [m for m in lam.get_paginator("list_event_source_mappings").paginate().build_full_result()
+                ["EventSourceMappings"] if f":function:servidesk-" in m["FunctionArn"]
+                and f"-{args.stage}-" in m["FunctionArn"]]
+    for m in mappings:
+        if m["State"] in ("Disabled", "Disabling"):
+            lam.update_event_source_mapping(UUID=m["UUID"], Enabled=True)
+    states = {}
+    for _ in range(30):
+        states = {m["FunctionArn"].rsplit(":", 1)[1]: lam.get_event_source_mapping(UUID=m["UUID"])["State"]
+                  for m in mappings}
+        if all(st == "Enabled" for st in states.values()):
+            break
+        time.sleep(3)
+    for fn, st in sorted(states.items()):
+        check(f"{fn:50} {st}", st == "Enabled", st)
+    print()
+
+
 def cmd_smoke(s, args):
+    cmd_enable(s, args)
     urls = find_urls(s, args.stage)
     if not all(urls.values()):
         sys.exit("Faltan APIs desplegadas; ejecuta primero el deploy.")
@@ -212,7 +238,7 @@ def cmd_smoke(s, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["urls", "migrate", "smoke", "all"])
+    parser.add_argument("command", choices=["urls", "migrate", "smoke", "enable", "all"])
     parser.add_argument("--stage", default="dev")
     parser.add_argument("--region", default="us-east-1")
     args = parser.parse_args()
@@ -224,6 +250,8 @@ def main():
     if args.command in ("migrate", "all"):
         cmd_migrate(s, args)
         print()
+    if args.command == "enable":
+        cmd_enable(s, args)
     if args.command in ("smoke", "all"):
         cmd_smoke(s, args)
 
