@@ -4,7 +4,7 @@ Guía para levantar el proyecto completo (backend, datos y frontend) desde cero 
 Tiempo total: unos 30–40 minutos, de los cuales ~15 son de espera mientras se crea RDS.
 
 Al terminar tendrás en tu cuenta: 6 microservicios (API Gateway + Lambda), RDS PostgreSQL con
-30 000 registros por microservicio en 3 tenants, SNS + 8 colas SQS, 3 buckets S3 y el frontend en Amplify.
+30 000 registros por microservicio en 3 tenants, SNS + 7 colas SQS (cada una con su DLQ), 3 buckets S3 y el frontend en Amplify.
 
 > Los comandos están para **PowerShell** (Windows). En Mac/Linux usa la columna o el bloque marcado
 > como *bash* y cambia `python` por `python3`.
@@ -145,7 +145,9 @@ Para la demo de eventos: entra como agente o admin a `/demo/plataforma` y usa **
 ## Al volver otro día
 
 1. **Start Lab** y vuelve a copiar las credenciales (paso 2). Caducan cada ~4 h.
-2. `python scripts/aws_check.py smoke` para comprobar que todo responde.
+2. `python scripts/aws_check.py smoke` para comprobar que todo responde. Al empezar **reactiva las colas
+   SQS → Lambda**: el Learner Lab desactiva los *event source mappings* al cerrar la sesión y, sin esto, los
+   eventos quedan esperando en las colas (no se pierden). Solo reactivar: `python scripts/aws_check.py enable`.
 3. Si falla la conexión a la base: consola de AWS → **RDS** → `servidesk-dev`. Si está *Stopped*:
    **Acciones → Iniciar** (~5 min).
 
@@ -169,6 +171,8 @@ No hace falta volver a desplegar. Solo si cambias código:
 | Ver el error real de un stack | Consola → CloudFormation → el stack → pestaña **Events**. |
 | Ver logs de una Lambda | `npx serverless incidents:logs --function createIncident --startTime 15m` |
 | La web carga muy lento | Probablemente tu red (DNS/TLS). Prueba otra red o el hotspot del celular. |
+| La web abre pero el login falla (500) | RDS detenida o el lab apagado: inicia el lab y RDS (paso anterior). |
+| No aparecen incidentes automáticos ni notificaciones | Colas desactivadas por el lab: `python scripts/aws_check.py enable`. |
 
 ## Borrar todo al final del curso
 
