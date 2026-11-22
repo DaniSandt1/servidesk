@@ -14,11 +14,12 @@ const FIG = path.join(ROOT, "docs", "diagramas");
 const REPO = "https://github.com/al3xi3w/servidesk";
 const APP = "https://main.d177kzi9o3gsmi.amplifyapp.com";
 
-const FONT = "Arial";
-const NAVY = "1F3864";
+const FONT = "Times New Roman";
+const NAVY = "182B4C"; // encabezado de tablas del informe del proyecto 1
+const CODE = "772002"; // rutas, archivos y comandos (Times, rojo oscuro)
 const A4 = { width: 11906, height: 16838 };
-const MARGIN = 1134; // 2 cm
-const CW = A4.width - 2 * MARGIN; // 9638 DXA de ancho útil (vertical)
+const MARGIN = 1440; // 2,54 cm, como el informe del proyecto 1
+const CW = A4.width - 2 * MARGIN; // 9026 DXA de ancho útil (vertical)
 const CW_L = A4.height - 2 * MARGIN; // 14570 DXA (horizontal)
 
 // ------------------------------------------------------------------ texto con **negrita** y `código`
@@ -31,7 +32,7 @@ function runs(text, base = {}) {
     if (m.index > last) out.push(new TextRun({ text: text.slice(last, m.index), font: FONT, ...base }));
     const tok = m[0];
     if (tok.startsWith("**")) out.push(new TextRun({ text: tok.slice(2, -2), bold: true, font: FONT, ...base }));
-    else out.push(new TextRun({ text: tok.slice(1, -1), font: "Consolas", color: "A23B2A", size: (base.size || 22) - 2 }));
+    else out.push(new TextRun({ text: tok.slice(1, -1), font: FONT, color: CODE, size: base.size, bold: base.bold }));
     last = m.index + tok.length;
   }
   if (last < text.length) out.push(new TextRun({ text: text.slice(last), font: FONT, ...base }));
@@ -40,20 +41,23 @@ function runs(text, base = {}) {
 
 const P = (text, opts = {}) =>
   new Paragraph({ children: runs(text, opts.run), alignment: opts.align ?? AlignmentType.JUSTIFIED,
-    spacing: { after: 120, line: 276 }, indent: opts.indent ? { firstLine: 567 } : undefined });
+    spacing: { after: 120, line: 276 }, indent: opts.indent ? { firstLine: 720 } : undefined });
 const H1 = (t, newPage = true) => new Paragraph({ heading: HeadingLevel.HEADING_1, pageBreakBefore: newPage,
   children: [new TextRun({ text: t, font: FONT })] });
 const H2 = (t) => new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: t, font: FONT })] });
 const bullet = (t, level = 0) => new Paragraph({ numbering: { reference: "bullets", level }, children: runs(t),
-  spacing: { after: 60 }, alignment: AlignmentType.LEFT });
+  spacing: { after: 60, line: 276 }, alignment: AlignmentType.JUSTIFIED });
 const numbered = (t, ref = "steps") => new Paragraph({ numbering: { reference: ref, level: 0 }, children: runs(t),
-  spacing: { after: 60 } });
+  spacing: { after: 60, line: 276 }, alignment: AlignmentType.JUSTIFIED });
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
+const quoted = (parts) => new Paragraph({ alignment: AlignmentType.JUSTIFIED, indent: { firstLine: 720 },
+  spacing: { before: 120, after: 160, line: 276 },
+  children: ["“", ...parts, "”"].map((x) => (typeof x === "string" ? new TextRun({ text: x, font: FONT }) : x)) });
 const link = (text, url) => new ExternalHyperlink({ link: url,
   children: [new TextRun({ text, style: "Hyperlink", font: FONT })] });
 
 // ------------------------------------------------------------------ tablas
-const BORDER = { style: BorderStyle.SINGLE, size: 4, color: "BFBFBF" };
+const BORDER = { style: BorderStyle.SINGLE, size: 3, color: "B2B8C1" };
 const BORDERS = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
 
 function table(headers, rows, widths, opts = {}) {
@@ -65,11 +69,11 @@ function table(headers, rows, widths, opts = {}) {
     width: { size: w[i], type: WidthType.DXA },
     borders: BORDERS,
     shading: head ? { fill: NAVY, type: ShadingType.CLEAR, color: "auto" }
-      : shade ? { fill: "F2F5FA", type: ShadingType.CLEAR, color: "auto" } : undefined,
-    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+      : shade ? { fill: "F1F4F6", type: ShadingType.CLEAR, color: "auto" } : undefined,
+    margins: { top: 60, bottom: 60, left: 90, right: 90 },
     verticalAlign: VerticalAlign.CENTER,
     children: String(text).split("\n").map((line) => new Paragraph({
-      children: runs(line, head ? { bold: true, color: "FFFFFF", size: 20 } : { size: 19 }),
+      children: runs(line, head ? { bold: true, color: "FFFFFF", size: 21 } : { size: 21 }),
       spacing: { after: 0 },
     })),
   });
@@ -86,35 +90,47 @@ const gap = () => new Paragraph({ children: [], spacing: { after: 80 } });
 
 // ------------------------------------------------------------------ cuadro amarillo de captura
 function shot(n, title, lines, opts = {}) {
+  // Cuadro amarillo + pie de figura en una misma tabla de 2 filas que no se separa entre páginas.
   const total = opts.total ?? CW;
   const YB = { style: BorderStyle.DASHED, size: 12, color: "C9A400" };
+  const NONE = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+  const keep = (para) => para; // las filas usan cantSplit y los párrafos keepNext
   return [new Table({
     width: { size: total, type: WidthType.DXA },
     columnWidths: [total],
-    rows: [new TableRow({ cantSplit: true, children: [new TableCell({
-      width: { size: total, type: WidthType.DXA },
-      borders: { top: YB, bottom: YB, left: YB, right: YB },
-      shading: { fill: "FFF2CC", type: ShadingType.CLEAR, color: "auto" },
-      margins: { top: 140, bottom: 140, left: 180, right: 180 },
-      children: [
-        new Paragraph({ spacing: { after: 80 }, children: [
-          new TextRun({ text: `CAPTURA ${n} · `, bold: true, font: FONT, color: "7F6000", size: 21 }),
-          new TextRun({ text: title, bold: true, font: FONT, color: "3D3000", size: 21 }),
-        ] }),
-        ...lines.map((l) => new Paragraph({ spacing: { after: 40 }, children: runs(l, { size: 19, color: "3D3000" }) })),
-        new Paragraph({ spacing: { before: 60, after: 0 }, keepNext: true, children: [new TextRun({
-          text: "Reemplazar este cuadro por la captura y mantener el pie de figura de abajo.", italics: true,
-          font: FONT, size: 17, color: "8C7A2E" })] }),
-      ],
-    })] })],
-  }), caption(opts.caption ?? title)];
+    rows: [
+      new TableRow({ cantSplit: true, children: [new TableCell({
+        width: { size: total, type: WidthType.DXA },
+        borders: { top: YB, bottom: YB, left: YB, right: YB },
+        shading: { fill: "FFF2CC", type: ShadingType.CLEAR, color: "auto" },
+        margins: { top: 140, bottom: 140, left: 180, right: 180 },
+        children: [
+          new Paragraph({ spacing: { after: 80 }, keepNext: true, children: [
+            new TextRun({ text: `CAPTURA ${n} · `, bold: true, font: FONT, color: "7F6000", size: 21 }),
+            new TextRun({ text: title, bold: true, font: FONT, color: "3D3000", size: 21 }),
+          ] }),
+          ...lines.map((l) => new Paragraph({ spacing: { after: 40 }, keepNext: true,
+            children: runs(l, { size: 19, color: "3D3000" }) })),
+          new Paragraph({ spacing: { before: 60, after: 0 }, keepNext: true, children: [new TextRun({
+            text: "Reemplazar el contenido de este cuadro por la captura; el pie de figura de abajo se mantiene.",
+            italics: true, font: FONT, size: 17, color: "8C7A2E" })] }),
+        ],
+      })] }),
+      new TableRow({ cantSplit: true, children: [new TableCell({
+        width: { size: total, type: WidthType.DXA },
+        borders: { top: NONE, bottom: NONE, left: NONE, right: NONE },
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        children: [keep(caption(opts.caption ?? title))],
+      })] }),
+    ],
+  }), new Paragraph({ children: [], spacing: { after: 120 } })];
 }
 
 let figN = 0;
 function caption(text) {
   figN += 1;
   return new Paragraph({ alignment: AlignmentType.LEFT, spacing: { before: 80, after: 240 },
-    children: [new TextRun({ text: `Figura ${figN}. ${text}`, italics: true, underline: {}, font: FONT, size: 20 })] });
+    children: [new TextRun({ text: `Figura ${figN}. ${text}`, italics: true, underline: {}, font: FONT, size: 22 })] });
 }
 
 function figure(file, widthPx, text) {
@@ -129,30 +145,22 @@ function figure(file, widthPx, text) {
 // ------------------------------------------------------------------ contenido
 const ENDPOINT_W = [10, 36, 54];
 
+const coverLine = (text, opts = {}) => new Paragraph({ alignment: AlignmentType.CENTER,
+  spacing: { before: opts.before ?? 0, after: opts.after ?? 0, line: 276 },
+  children: [new TextRun({ text, font: FONT, size: opts.size ?? 28, bold: opts.bold ?? false })] });
+
 const portada = [
-  new Paragraph({ spacing: { before: 600, after: 200 }, alignment: AlignmentType.CENTER,
-    children: [new TextRun({ text: "UNIVERSIDAD DE INGENIERÍA Y TECNOLOGÍA", bold: true, font: FONT, size: 30 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 400, after: 60 },
-    children: [new TextRun({ text: "Curso:", font: FONT, size: 26 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 500 },
-    children: [new TextRun({ text: "Cloud Computing (CS2032)", font: FONT, size: 26 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 },
-    children: [new TextRun({ text: "Proyecto Final: ServiDesk", bold: true, font: FONT, size: 40, color: NAVY })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 700 },
-    children: [new TextRun({ text: "SaaS de gestión de servicios TI (ITSM) multi-tenant, serverless y basado en eventos en AWS",
-      font: FONT, size: 26 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 },
-    children: [new TextRun({ text: "Integrantes Grupo 6 (ITSM):", bold: true, font: FONT, size: 24 })] }),
+  coverLine("UNIVERSIDAD DE INGENIERÍA Y TECNOLOGÍA", { bold: true, before: 400, after: 1000 }),
+  coverLine("Curso:", { bold: true }),
+  coverLine("Cloud Computing (CS2032)", { after: 1000 }),
+  coverLine("Proyecto: ServiDesk - Plataforma SaaS de gestión de servicios TI (ITSM)", { bold: true, size: 34 }),
+  coverLine("multi-tenant, serverless y basada en eventos en AWS", { bold: true, size: 34, after: 1000 }),
+  coverLine("Integrantes Grupo:", { after: 120 }),
   ...["Daniel Guillermo Sandoval Toro (202310533)", "Jose Ernesto Guerrero Cueva (202210566)",
     "Ian Jesus Rodríguez Santayana (202310184)", "Vannia Fatima Curay Mauricio (201910133)",
-    "Mia Wood De la fuente chavez (202410085)"].map((n) => new Paragraph({ alignment: AlignmentType.CENTER,
-    spacing: { after: 80 }, children: [new TextRun({ text: n, font: FONT, size: 24 })] })),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 500, after: 60 },
-    children: [new TextRun({ text: "Profesor:", bold: true, font: FONT, size: 24 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 },
-    children: [new TextRun({ text: "Lezama, Aldo", font: FONT, size: 24 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 500 },
-    children: [new TextRun({ text: "Lima, noviembre de 2026", font: FONT, size: 22, color: "595959" })] }),
+    "Mia Wood De la fuente chavez (202410085)"].map((n) => coverLine(n, { after: 120 })),
+  coverLine("Profesor:", { bold: true, before: 900 }),
+  coverLine("Lezama, Aldo"),
   pageBreak(),
   new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 },
     children: [new TextRun({ text: "ÍNDICE", bold: true, font: FONT, size: 28 })] }),
@@ -194,12 +202,11 @@ const intro = [
     ["Demo con 2 tenants", "andina y pacifico en dos pestañas", "Figura 25"],
   ], [30, 46, 24]),
   gap(),
-  new Paragraph({ alignment: AlignmentType.LEFT, spacing: { before: 120, after: 120 }, children: [
-    new TextRun({ text: "El código completo, los contratos de API y la guía de despliegue están en el repositorio público de GitHub: ", font: FONT, italics: true }),
+  quoted([
+    "El código completo, los contratos de API y la guía de despliegue están en el repositorio público de GitHub: ",
     link(REPO, REPO),
-    new TextRun({ text: " (README.md, docs/DEPLOY.md, docs/API_CONTRACTS.md y el README de cada microservicio). Aplicación publicada: ", font: FONT, italics: true }),
-    link(APP, APP), new TextRun({ text: ".", font: FONT, italics: true }),
-  ] }),
+    " (README.md, docs/DEPLOY.md, docs/API_CONTRACTS.md y el README de cada microservicio). Aplicación publicada: ",
+    link(APP, APP), "."]),
 ];
 
 const arquitectura = [
@@ -258,9 +265,7 @@ const ms = (id, title, desc, rows, extra = []) => [
 const backend = [
   H1("3. BACKEND: MICROSERVICIOS"),
   P("Cada microservicio es un servicio de Serverless Framework con su propia HTTP API, sus funciones Lambda, su base de datos y, si consume eventos, sus colas SQS. Todos siguen los mismos contratos (`docs/API_CONTRACTS.md` y `docs/openapi.yaml`): respuestas `{data}` / `{data, meta}`, errores `{error: {code, message, details, request_id}}`, paginación, filtros y validación estricta del body.", { indent: true }),
-  new Paragraph({ spacing: { after: 160 }, children: [
-    new TextRun({ text: "Código fuente de los 6 microservicios: ", font: FONT, italics: true }),
-    link(`${REPO}/tree/main/services`, `${REPO}/tree/main/services`)] }),
+  quoted(["Código fuente de los 6 microservicios: ", link(`${REPO}/tree/main/services`, `${REPO}/tree/main/services`)]),
   H2("3.1 Resumen"),
   table(["Microservicio", "Responsabilidad", "Base de datos", "Endpoints", "Publica / consume"], [
     ["ms-identity", "Login JWT, usuarios, equipos, notificaciones", "db_identity", "9", "Publica UserCreated · consume identity-notify-q"],
@@ -324,7 +329,7 @@ const erFigs = [
   ["5_er_problems.png", "Diagrama E/R de db_problems (ms-problems)."],
   ["6_er_changes.png", "Diagrama E/R de db_changes (ms-changes)."],
   ["7_er_requests.png", "Diagrama E/R de db_requests (ms-requests)."],
-].flatMap(([f, t]) => figure(f, 640, t));
+].flatMap(([f, t]) => figure(f, 600, t));
 
 const backend2 = [
   H2("3.9 Datos ficticios"),
@@ -358,9 +363,8 @@ const backend2 = [
 const frontend = [
   H1("4. FRONTEND"),
   P("El frontend es una SPA en **React 19 + TypeScript + Vite**, publicada en **AWS Amplify Hosting**. Está pensada para las empresas cliente y sus trabajadores, con lenguaje simple (Fallas, Problemas recurrentes, Actualizaciones, Pedidos, Equipos y sistemas), tema y logo por tenant, y vistas según el rol.", { indent: true }),
-  new Paragraph({ spacing: { after: 160 }, children: [
-    new TextRun({ text: "Aplicación publicada: ", font: FONT, italics: true }), link(APP, APP),
-    new TextRun({ text: " · Código: ", font: FONT, italics: true }), link(`${REPO}/tree/main/frontend`, `${REPO}/tree/main/frontend`)] }),
+  quoted(["Aplicación publicada: ", link(APP, APP), ". Código del frontend: ",
+    link(`${REPO}/tree/main/frontend`, `${REPO}/tree/main/frontend`)]),
   table(["Ruta", "Quién", "Qué muestra"], [
     ["/login", "público", "Login por código de organización, con accesos a las cuentas demo"],
     ["/app", "todos", "Tablero (admin/agent) o portal de autoservicio (customer)"],
@@ -483,34 +487,38 @@ const landscape = { page: { size: { ...A4, orientation: PageOrientation.LANDSCAP
   margin: { top: 900, right: MARGIN, bottom: 900, left: MARGIN } } };
 
 const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [
-  new TextRun({ text: "ServiDesk · CS2032 Cloud Computing · ", font: FONT, size: 16, color: "8C8C8C" }),
-  new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 16, color: "8C8C8C" })] })] });
+  new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 20 })] })] });
 
 const doc = new Document({
   creator: "Grupo 6 · CS2032",
   title: "Proyecto Final: ServiDesk",
   // El índice lo actualiza Word al exportar (ver README); sin aviso de "actualizar campos" al abrir.
   styles: {
-    default: { document: { run: { font: FONT, size: 22 } } },
+    default: { document: { run: { font: FONT, size: 22 }, paragraph: { spacing: { line: 276 } } } },
     paragraphStyles: [
       { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { font: FONT, size: 30, bold: true, color: NAVY },
-        paragraph: { spacing: { before: 240, after: 160 }, keepNext: true, outlineLevel: 0 } },
+        run: { font: FONT, size: 24, bold: true, color: "000000" },
+        paragraph: { spacing: { before: 240, after: 240 }, keepNext: true, keepLines: true, outlineLevel: 0 } },
       { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { font: FONT, size: 25, bold: true, color: "2E5597" },
-        paragraph: { spacing: { before: 220, after: 110 }, keepNext: true, outlineLevel: 1 } },
+        run: { font: FONT, size: 22, color: "000000", underline: {} },
+        paragraph: { spacing: { before: 240, after: 200 }, keepNext: true, keepLines: true, outlineLevel: 1 } },
+      // Índice como el del proyecto 1: nivel 1 en negrita, nivel 2 con sangría
+      { id: "TOC1", name: "toc 1", basedOn: "Normal", next: "Normal",
+        run: { font: FONT, size: 22, bold: true }, paragraph: { spacing: { before: 60, after: 0 } } },
+      { id: "TOC2", name: "toc 2", basedOn: "Normal", next: "Normal",
+        run: { font: FONT, size: 22 }, paragraph: { spacing: { before: 60, after: 0 }, indent: { left: 360 } } },
     ],
   },
   numbering: { config: [
     { reference: "bullets", levels: [
-      { level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT,
-        style: { paragraph: { indent: { left: 567, hanging: 283 } } } },
+      { level: 0, format: LevelFormat.BULLET, text: "●", alignment: AlignmentType.LEFT,
+        style: { paragraph: { indent: { left: 720, hanging: 360 } }, run: { size: 16 } } },
       { level: 1, format: LevelFormat.BULLET, text: "◦", alignment: AlignmentType.LEFT,
         style: { paragraph: { indent: { left: 1134, hanging: 283 } } } }] },
     { reference: "steps", levels: [{ level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT,
-      style: { paragraph: { indent: { left: 567, hanging: 340 } } } }] },
+      style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] },
     { reference: "deploy", levels: [{ level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT,
-      style: { paragraph: { indent: { left: 567, hanging: 340 } } } }] },
+      style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] },
   ] },
   sections: [
     { properties: portrait, children: portada },
