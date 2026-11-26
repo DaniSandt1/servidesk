@@ -2,9 +2,11 @@
 
 | Archivo | Contenido |
 | --- | --- |
-| `1_diagrama_arquitectura.png` | Arquitectura de solución en AWS |
+| `1b_diagrama_arquitectura_v2.png` | Arquitectura de solución vigente: RDS en subredes privadas y credenciales en Secrets Manager |
+| `1_diagrama_arquitectura.png` | Arquitectura anterior (RDS pública), se conserva como referencia |
 | `2_er_identity.png` … `7_er_requests.png` | Diagrama E/R de la base de cada microservicio |
-| `servidesk_arquitectura.drawio` | Fuente editable de la arquitectura |
+| `servidesk_arquitectura_v2.drawio` | Fuente editable de la arquitectura vigente (se genera con `python docs/diagramas/build_arquitectura_v2.py`) |
+| `servidesk_arquitectura.drawio` | Fuente editable de la arquitectura anterior |
 | `servidesk_er.drawio` | Fuente editable de los 6 E/R (una página por microservicio) |
 
 Los `.drawio` se abren con [draw.io](https://app.diagrams.net) o draw.io Desktop. Se generan con
