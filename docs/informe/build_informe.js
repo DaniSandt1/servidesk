@@ -193,7 +193,8 @@ const intro = [
     ["Serverless", "API Gateway (6 HTTP API) + 59 funciones Lambda, sin servidores", "Figuras 1, 16 y 17"],
     ["Basada en eventos (EDA)", "1 tópico SNS, 7 colas SQS con DLQ y 8 consumidores", "2.3 y Figuras 13, 19, 20 y 23"],
     ["≥ 5 microservicios protegidos, cada uno con su BD", "6 microservicios con Lambda Authorizer JWT, una base por microservicio", "3.1"],
-    ["RDS único, patrón 2 (Single Database, Multiple Schemas)", "Instancia servidesk-dev; 6 bases db_*, cada una con 3 schemas tenant_*", "3.8 y Figura 18"],
+    ["RDS único, patrón 2 (Single Database, Multiple Schemas)", "Instancia servidesk-db-dev; 6 bases db_*, cada una con 3 schemas tenant_*", "3.8 y Figura 18"],
+    ["RDS privada y credenciales seguras", "RDS en subredes privadas sin acceso público; usuario/contraseña de la BD y clave JWT en AWS Secrets Manager", "2.1, 2.4 y Figuras 1, 18 y 26"],
     ["Diagrama E/R por microservicio", "6 diagramas E/R (todas las bases son PostgreSQL)", "Figuras 2 a 7"],
     ["30 000 registros por microservicio en 3 tenants", "10 000 por tenant en la tabla principal de cada servicio", "3.9 y Figura 8"],
     ["Usar S3, SNS y SQS", "S3 (carga de datos, adjuntos, exportes), SNS (eventos) y SQS (colas por consumidor)", "Figuras 19 a 21"],
@@ -211,20 +212,22 @@ const intro = [
 
 const arquitectura = [
   H1("2. ARQUITECTURA DE SOLUCIÓN"),
-  P("La Figura 1 muestra todos los servicios de AWS utilizados en el frontend, el backend, la mensajería, los datos y el despliegue, con un color de flecha por tipo de flujo (tráfico de usuarios, autorización, SQL, publicación de eventos, entrega por SQS, carga de datos y despliegue).", { indent: true }),
-  P("El diagrama editable está en `docs/diagramas/servidesk_arquitectura.drawio` y la figura en alta resolución en `docs/diagramas/1_diagrama_arquitectura.png`.", { align: AlignmentType.LEFT }),
+  P("La Figura 1 muestra todos los servicios de AWS utilizados en el frontend, el backend, la mensajería, los datos y el despliegue, con un color de flecha por tipo de flujo (tráfico de usuarios, autorización, SQL, publicación de eventos, entrega por SQS, carga de datos y despliegue). La base de datos RDS está en **subredes privadas** de la VPC, sin acceso desde Internet, y las Lambdas que la usan obtienen sus credenciales de **AWS Secrets Manager**.", { indent: true }),
+  P("El diagrama editable está en `docs/diagramas/servidesk_arquitectura_v2.drawio` y la figura en alta resolución en `docs/diagramas/1b_diagrama_arquitectura_v2.png`.", { align: AlignmentType.LEFT }),
 ];
 
-const arqFigure = [...figure("1_diagrama_arquitectura.png", 690, "Diagrama de Arquitectura de Solución de ServiDesk")];
+const arqFigure = [...figure("1b_diagrama_arquitectura_v2.png", 690, "Diagrama de Arquitectura de Solución de ServiDesk")];
 
 const arquitectura2 = [
   H2("2.1 Componentes y servicios AWS"),
   table(["Capa", "Servicio / recurso", "Función"], [
     ["Frontend", "AWS Amplify Hosting\n(app servidesk, rama main)", "Hospeda la SPA React 19 + Vite. Las URLs de las 6 APIs se inyectan con variables `VITE_API_*_URL` al compilar."],
     ["Entrada", "Amazon API Gateway\n(6 HTTP API)", "Una API por microservicio, HTTPS y CORS. 44 rutas: 43 con authorizer JWT y `POST /auth/login` pública."],
-    ["Seguridad", "Lambda Authorizer", "Valida firma HS256, expiración y claims del JWT y entrega a cada Lambda el contexto `tenant_id`, `schema`, `role`, `user_id` (caché de 300 s)."],
-    ["Cómputo", "AWS Lambda (Python 3.12)", "57 funciones en los 6 microservicios (rutas HTTP, consumidores SQS y migrate) + authorizer y seedLoader en el stack infra. Capa común con pg8000, PyJWT y utilidades."],
-    ["Datos", "Amazon RDS PostgreSQL 16\n(servidesk-dev, db.t3.micro)", "Instancia única con SSL obligatorio. Una base por microservicio (db_identity … db_requests) y un schema por tenant en cada una."],
+    ["Seguridad", "Lambda Authorizer", "Valida firma HS256 (clave JwtSecret leída de Secrets Manager), expiración y claims del JWT y entrega a cada Lambda el contexto `tenant_id`, `schema`, `role`, `user_id` (caché de 300 s)."],
+    ["Cómputo", "AWS Lambda (Python 3.12)", "57 funciones en los 6 microservicios (rutas HTTP, consumidores SQS y migrate) + authorizer y seedLoader en el stack infra. Capa común con pg8000, PyJWT y utilidades. Las Lambdas que acceden a la BD se ejecutan dentro de la VPC."],
+    ["Red", "Amazon VPC\n(2 subredes privadas)", "Subredes privadas sin ruta a Internet para RDS y las Lambdas. Security groups: RDS solo acepta 5432 desde el SG de las Lambdas. VPC endpoints: Secrets Manager y SNS (interface) y S3 (gateway); no se usa NAT."],
+    ["Secretos", "AWS Secrets Manager\n(DbSecret, JwtSecret)", "DbSecret: usuario, contraseña, host y puerto de RDS (contraseña generada por CloudFormation). JwtSecret: clave HS256 de los tokens. Las Lambdas los leen al iniciar y los guardan en caché."],
+    ["Datos", "Amazon RDS PostgreSQL 16\n(servidesk-db-dev, db.t3.micro)", "Instancia única, privada (PubliclyAccessible = false) y con SSL obligatorio. Una base por microservicio (db_identity … db_requests) y un schema por tenant en cada una."],
     ["Eventos", "Amazon SNS\n(servidesk-itsm-events-dev)", "Tópico único de eventos de dominio; cada suscripción filtra por `eventType` (FilterPolicy)."],
     ["Colas", "Amazon SQS (7 colas + 7 DLQ)", "Una cola por consumidor con su cola de mensajes fallidos (maxReceiveCount 3) y ReportBatchItemFailures."],
     ["Almacenamiento", "Amazon S3 (3 buckets)", "seed: CSV comprimidos de la carga de datos; attachments y exports: provisionados para adjuntos y exportes."],
@@ -235,10 +238,10 @@ const arquitectura2 = [
   gap(),
   H2("2.2 Recorrido de una petición"),
   numbered("El usuario abre la aplicación servida por Amplify e inicia sesión con el **código de su organización**, su email y su contraseña."),
-  numbered("ms-identity busca el código en `public.tenants`, valida la contraseña (PBKDF2) en el schema del tenant y firma un JWT de 1 hora con `tenant_id`, `schema` y `role`."),
+  numbered("ms-identity busca el código en `public.tenants`, valida la contraseña (PBKDF2) en el schema del tenant y firma un JWT de 1 hora con `tenant_id`, `schema` y `role` usando la clave JwtSecret de Secrets Manager."),
   numbered("Cada llamada del navegador va por HTTPS a la HTTP API del microservicio con `Authorization: Bearer <token>`."),
   numbered("API Gateway invoca al Lambda Authorizer, que valida el token y entrega el contexto del tenant."),
-  numbered("La Lambda del endpoint abre la conexión SSL a su base, fija `SET search_path` al schema del tenant del token y ejecuta la consulta."),
+  numbered("La Lambda del endpoint, dentro de la subred privada, lee las credenciales de DbSecret en Secrets Manager (por el VPC endpoint), abre la conexión SSL a su base, fija `SET search_path` al schema del tenant del token y ejecuta la consulta."),
   numbered("Si la operación cambia el estado del dominio, después del COMMIT publica un evento en SNS; las colas SQS suscritas lo entregan a las Lambdas consumidoras de otros microservicios."),
   H2("2.3 Arquitectura basada en eventos"),
   P("Los microservicios no se llaman entre sí: se coordinan con eventos. Cada evento lleva un sobre común (`eventId`, `eventType`, `tenantId`, `occurredAt`, `source`, `data`) y cada consumidor es idempotente gracias a la tabla `processed_events`.", { indent: true }),
@@ -256,7 +259,7 @@ const arquitectura2 = [
   bullet("**Una sola fuente de verdad**: cada Lambda toma el schema del contexto del authorizer y la capa común lo valida con una expresión regular antes del `SET search_path`."),
   bullet("**Los IDs de otro tenant no existen**: pedir un recurso de otro tenant responde 404 (no 403), así no se revela que existe."),
   bullet("Dentro del tenant, los clientes (customer) solo ven sus propios incidentes y solicitudes; la aprobación CAB y de solicitudes es solo de administradores."),
-  bullet("Contraseñas con **PBKDF2-SHA256 (310 000 iteraciones)**; conexión a RDS con SSL; secretos solo en variables de entorno."),
+  bullet("Contraseñas con **PBKDF2-SHA256 (310 000 iteraciones)**; conexión a RDS con SSL desde la VPC; **RDS privada** (sin IP pública, su security group solo acepta a las Lambdas); credenciales de la BD y clave JWT en **AWS Secrets Manager**, nunca en el código ni en variables de entorno."),
 ];
 
 const ms = (id, title, desc, rows, extra = []) => [
@@ -318,7 +321,7 @@ const backend = [
     ["PUT", "/requests/{id}/status", "Aprobar, rechazar, atender y completar"],
   ]),
   H2("3.8 Modelo de datos"),
-  P("Las 6 bases son **PostgreSQL** (relacionales) y viven en la instancia única servidesk-dev. Cada microservicio es dueño de su base (`db_<servicio>`) y dentro de ella existe un **schema por tenant** (`tenant_andina`, `tenant_pacifico`, `tenant_unitec`) con las mismas tablas: es el patrón 2 de multi-tenancy (Single Database, Multiple Schemas) aplicado a cada microservicio. La tabla global `public.tenants` de db_identity relaciona cada código de organización con su schema.", { indent: true }),
+  P("Las 6 bases son **PostgreSQL** (relacionales) y viven en la instancia única y privada servidesk-db-dev. Cada microservicio es dueño de su base (`db_<servicio>`) y dentro de ella existe un **schema por tenant** (`tenant_andina`, `tenant_pacifico`, `tenant_unitec`) con las mismas tablas: es el patrón 2 de multi-tenancy (Single Database, Multiple Schemas) aplicado a cada microservicio. La tabla global `public.tenants` de db_identity relaciona cada código de organización con su schema.", { indent: true }),
   P("Las Figuras 2 a 7 muestran el diagrama E/R de cada base. Solo se dibujan como entidades las tablas reales con sus claves foráneas. Las referencias a otro microservicio (por ejemplo `incidents.ci_id`) van punteadas hacia cajas grises porque **no hay FK entre bases**: la consistencia la dan la API y los eventos. Las columnas JSONB (`attributes`, `form_schema`, `form_data`) se documentan con un ejemplo de su estructura JSON, y las tablas técnicas sin relaciones (idempotencia de SQS) van en una nota.", { indent: true }),
 ];
 
@@ -334,7 +337,7 @@ const erFigs = [
 const backend2 = [
   H2("3.9 Datos ficticios"),
   P("`seed/generate.py` genera con Faker (es_ES) **10 000 registros por tenant en la tabla principal de cada microservicio**, más sus tablas relacionadas, como CSV comprimidos. Los UUID son deterministas (uuid5), así que un `reporter_id` o un `ci_id` apuntan a registros que existen en el otro microservicio. Se respetan las reglas del negocio: prioridad = impacto × urgencia, SLA vencido, errores conocidos solo en problemas resueltos, aprobaciones CAB solo en cambios no estándar y formularios válidos contra el catálogo.", { indent: true }),
-  P("`seed/load.py` sube los archivos al bucket **S3** `servidesk-seed-dev-<cuenta>` e invoca la Lambda **seedLoader**, que los transmite de S3 a RDS con `COPY … FROM STDIN` por SSL, por servicio y tenant, en una transacción (la carga se puede repetir sin duplicar)."),
+  P("`seed/load.py` sube los archivos al bucket **S3** `servidesk-seed-dev-<cuenta>` e invoca la Lambda **seedLoader**, que se ejecuta dentro de la VPC y los transmite de S3 (por el gateway endpoint) a RDS con `COPY … FROM STDIN` por SSL, por servicio y tenant, en una transacción (la carga se puede repetir sin duplicar)."),
   table(["Microservicio", "Tabla principal", "andina", "pacifico", "unitec", "Total"], [
     ["ms-identity", "users", "10 000", "10 000", "10 000", "30 000"],
     ["ms-cmdb", "configuration_items", "10 000", "10 000", "10 000", "30 000"],
@@ -405,7 +408,7 @@ const despliegue = [
   H1("5. DESPLIEGUE EN AWS"),
   P("Todo el backend se despliega en AWS Academy Learner Lab con **Serverless Framework v3 + serverless-compose**: un solo comando crea los 7 stacks de CloudFormation, primero el stack compartido y luego los 6 microservicios en paralelo. La guía completa, para desplegarlo en cualquier cuenta, está en `docs/DEPLOY.md`.", { indent: true }),
   table(["Stack", "Recursos principales"], [
-    ["servidesk-infra-dev", "RDS PostgreSQL 16, tópico SNS, 3 buckets S3, capa común (pg8000, PyJWT), Lambda Authorizer y Lambda seedLoader"],
+    ["servidesk-infra-dev", "VPC: 2 subredes privadas, security groups y VPC endpoints (Secrets Manager, SNS, S3); secretos DbSecret y JwtSecret; RDS PostgreSQL 16 privada, tópico SNS, 3 buckets S3, capa común (pg8000, PyJWT), Lambda Authorizer y Lambda seedLoader"],
     ["servidesk-identity-dev", "HTTP API (9 rutas), 11 Lambdas, cola identity-notify-q + DLQ"],
     ["servidesk-cmdb-dev", "HTTP API (8 rutas), 10 Lambdas, cola cmdb-changes-q + DLQ"],
     ["servidesk-incidents-dev", "HTTP API (7 rutas), 11 Lambdas, colas incidents-ci-q, incidents-problem-q, incidents-kedb-q + DLQ"],
@@ -415,7 +418,7 @@ const despliegue = [
   ], [28, 72]),
   gap(),
   new Paragraph({ children: [new TextRun({ text: "Pasos principales", bold: true, font: FONT })], spacing: { after: 80 } }),
-  numbered("Copiar las credenciales del Learner Lab a `~/.aws/credentials` y crear `.env` con `DB_PASSWORD` y `JWT_SECRET`.", "deploy"),
+  numbered("Copiar las credenciales del Learner Lab a `~/.aws/credentials` (no hace falta `.env`: CloudFormation genera la contraseña de la BD y la clave JWT en Secrets Manager).", "deploy"),
   numbered("`npm run deploy`: instala la capa común para Lambda (Linux, Python 3.12) y despliega infra y los 6 servicios (unos 15–20 min, la mayor parte es la creación de RDS).", "deploy"),
   numbered("`python scripts/aws_check.py all`: obtiene las URLs de las 6 APIs, ejecuta las migraciones (identity primero) y la prueba de humo.", "deploy"),
   numbered("`python seed/generate.py` y `python seed/load.py all`: generan los datos, los suben a S3 y los cargan con seedLoader.", "deploy"),
@@ -434,9 +437,9 @@ const despliegue = [
     "Abrir dev-servidesk-incidents → Routes y mostrar las rutas con el authorizer jwtAuthorizer.",
   ], { caption: "HTTP APIs de API Gateway y rutas protegidas con el Lambda Authorizer." }),
   ...shot(11, "Amazon RDS", [
-    "Consola → RDS → Databases → servidesk-dev.",
-    "Mostrar motor PostgreSQL 16, clase db.t3.micro y estado Available.",
-  ], { caption: "Instancia única de RDS PostgreSQL." }),
+    "Consola → RDS → Databases → servidesk-db-dev.",
+    "Mostrar motor PostgreSQL 16, clase db.t3.micro y estado Available; en la pestaña Connectivity & security, \"Publicly accessible: No\" y las subredes privadas servidesk-private-a/b-dev.",
+  ], { caption: "Instancia única de RDS PostgreSQL, privada." }),
   ...shot(12, "Amazon SNS", [
     "Consola → SNS → Topics → servidesk-itsm-events-dev → pestaña Subscriptions.",
     "Mostrar las 7 suscripciones de tipo SQS (si cabe, abrir una y mostrar su filter policy por eventType).",
@@ -463,14 +466,18 @@ const despliegue = [
     "Abrir dos pestañas del frontend: una con andina (Andina Retail) y otra con pacifico (Clínica Pacífico).",
     "Capturar ambas lado a lado: cada una con su logo, colores y sus propios datos (lista de fallas o tablero).",
   ], { caption: "Demo con dos tenants: cada organización ve solo su información." }),
+  ...shot(19, "AWS Secrets Manager", [
+    "Consola → Secrets Manager → Secrets: mostrar los secretos de la base de datos (DbSecret) y de la clave JWT (JwtSecret) del stack servidesk-infra-dev.",
+    "Opcional: Consola → VPC → Endpoints, mostrar los endpoints de Secrets Manager, SNS y S3 en estado Available.",
+  ], { caption: "Credenciales de la BD y clave JWT en AWS Secrets Manager." }),
 ];
 
 const limitaciones = [
   H1("6. LIMITACIONES Y TRABAJO FUTURO"),
-  bullet("**Red y RDS**: por las restricciones de AWS Academy, la instancia de RDS es pública con un security group abierto y las Lambdas se conectan sin VPC. En producción se usaría una VPC privada, RDS Proxy para reutilizar conexiones y AWS Secrets Manager para la contraseña."),
+  bullet("**Red y RDS**: la instancia de RDS ya es privada y las credenciales están en Secrets Manager, pero es una sola instancia (Single-AZ) y cada Lambda abre su propia conexión. En producción se usaría Multi-AZ, RDS Proxy para reutilizar conexiones y la rotación automática de secretos (AWS Academy no permite crear el rol que necesita)."),
   bullet("**Publicación de eventos**: los eventos se publican después del COMMIT; si SNS fallara en ese instante, el evento se perdería. Se propone el patrón transactional outbox."),
   bullet("**Alcance funcional**: las tablas de tareas (problem_tasks, change_tasks, fulfillment_tasks) aún no tienen endpoints; los buckets de adjuntos y exportes están provisionados pero no se usan; falta una Lambda programada que marque el SLA vencido y publique IncidentSlaBreached."),
-  bullet("**Autenticación**: JWT HS256 con secreto compartido y sin refresh token (la sesión dura 1 hora). Se propone Amazon Cognito o tokens RS256 con rotación de claves."),
+  bullet("**Autenticación**: JWT HS256 con una clave compartida (guardada en Secrets Manager) y sin refresh token (la sesión dura 1 hora). Se propone Amazon Cognito o tokens RS256 con rotación de claves."),
   bullet("**Despliegue**: el frontend se publica en Amplify con un script de despliegue manual; se propone conectar Amplify al repositorio para CI/CD. Serverless Framework v3 ya no recibe nuevas versiones; se evaluaría migrar a v4 o a AWS SAM/CDK."),
   bullet("**CORS** abierto (`*`) en las APIs; en producción se limitaría al dominio de Amplify."),
   H1("7. CONCLUSIONES", false),

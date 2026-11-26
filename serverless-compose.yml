@@ -6,7 +6,13 @@ services:
   identity:
     path: services/identity
     params:
-      dbHost: ${infra.DbHost}
+      jwtSecretArn: ${infra.JwtSecretArn}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}
@@ -16,7 +22,12 @@ services:
   cmdb:
     path: services/cmdb
     params:
-      dbHost: ${infra.DbHost}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}
@@ -26,7 +37,12 @@ services:
   incidents:
     path: services/incidents
     params:
-      dbHost: ${infra.DbHost}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}
@@ -36,7 +52,12 @@ services:
   problems:
     path: services/problems
     params:
-      dbHost: ${infra.DbHost}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}
@@ -46,7 +67,12 @@ services:
   changes:
     path: services/changes
     params:
-      dbHost: ${infra.DbHost}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}
@@ -56,7 +82,12 @@ services:
   requests:
     path: services/requests
     params:
-      dbHost: ${infra.DbHost}
+      dbSecretArn: ${infra.DbSecretArn}
+      secretsEndpointUrl: ${infra.SecretsEndpointUrl}
+      snsEndpointUrl: ${infra.SnsEndpointUrl}
+      lambdaSecurityGroupId: ${infra.LambdaSecurityGroupId}
+      subnetA: ${infra.SubnetA}
+      subnetB: ${infra.SubnetB}
       eventsTopicArn: ${infra.EventsTopicArn}
       authorizerArn: ${infra.AuthorizerArn}
       commonLayerArn: ${infra.CommonLayerArn}

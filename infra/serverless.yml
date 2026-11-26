@@ -1,4 +1,4 @@
-# Stack compartido: RDS, SNS, S3, layer común y Lambda Authorizer.
+# Stack compartido: RDS (privada), secreto de la BD, red de las Lambdas, SNS, S3, layer común y Lambda Authorizer.
 # Responsable: Vannia (infra) + José (código del authorizer)
 service: servidesk-infra
 frameworkVersion: "3"
@@ -12,7 +12,11 @@ provider:
   iam:
     role: arn:aws:iam::${aws:accountId}:role/LabRole   # AWS Academy: no se pueden crear roles
   environment:
-    JWT_SECRET: ${env:JWT_SECRET}
+    JWT_SECRET_ARN: !Ref JwtSecret   # clave HS256 de los JWT en Secrets Manager (la usa el authorizer)
+
+custom:
+  # VPC por defecto y 2 zonas de disponibilidad (ver vpc.js)
+  vpc: ${file(./vpc.js)}
 
 package:
   individually: true
@@ -48,10 +52,12 @@ functions:
     memorySize: 1024
     layers:
       - { Ref: CommonLambdaLayer }
+    vpc:   # RDS es privada: la Lambda corre en las subredes privadas (S3 por el endpoint gateway)
+      securityGroupIds: [!GetAtt LambdaSecurityGroup.GroupId]
+      subnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
     environment:
-      DB_HOST: !GetAtt Database.Endpoint.Address
-      DB_USER: servidesk_admin
-      DB_PASSWORD: ${env:DB_PASSWORD}
+      DB_SECRET_ARN: !Ref DbSecret
+      SECRETS_ENDPOINT_URL: !Join ["", ["https://", !Select [1, !Split [":", !Select [0, !GetAtt SecretsManagerEndpoint.DnsEntries]]]]]
       SEED_BUCKET: !Ref SeedBucket
     package:
       patterns:
@@ -90,28 +96,139 @@ resources:
       Properties:
         BucketName: servidesk-seed-${self:provider.stage}-${aws:accountId}
 
-    # ---------- RDS PostgreSQL (una sola instancia) ----------
+    # ---------- Red privada (dentro de la VPC por defecto, sin NAT ni ruta a internet) ----------
+    # RDS y las Lambdas que usan la BD viven en 2 subredes privadas. Sin salida a internet,
+    # Secrets Manager y SNS se alcanzan por endpoints interface y S3 por un endpoint gateway.
+    PrivateSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: ${self:custom.vpc.vpcId}
+        AvailabilityZone: ${self:custom.vpc.azA}
+        CidrBlock: 172.31.200.0/24        # fuera de las /20 por defecto (172.31.0.0 – 172.31.95.255)
+        MapPublicIpOnLaunch: false
+        Tags: [{ Key: Name, Value: "servidesk-private-a-${self:provider.stage}" }]
+    PrivateSubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: ${self:custom.vpc.vpcId}
+        AvailabilityZone: ${self:custom.vpc.azB}
+        CidrBlock: 172.31.201.0/24
+        MapPublicIpOnLaunch: false
+        Tags: [{ Key: Name, Value: "servidesk-private-b-${self:provider.stage}" }]
+    # Tabla de rutas propia: solo la ruta local de la VPC (+ S3 por el endpoint gateway), sin Internet Gateway
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: ${self:custom.vpc.vpcId}
+        Tags: [{ Key: Name, Value: "servidesk-private-rt-${self:provider.stage}" }]
+    PrivateSubnetARouteTable:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetA
+        RouteTableId: !Ref PrivateRouteTable
+    PrivateSubnetBRouteTable:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetB
+        RouteTableId: !Ref PrivateRouteTable
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Lambdas de ServiDesk con acceso a RDS
+        VpcId: ${self:custom.vpc.vpcId}
+    EndpointSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Endpoints de VPC de ServiDesk (HTTPS desde las Lambdas)
+        VpcId: ${self:custom.vpc.vpcId}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            SourceSecurityGroupId: !GetAtt LambdaSecurityGroup.GroupId
+    # PrivateDnsEnabled: false -> no choca con otros endpoints de la misma VPC; las Lambdas
+    # usan la URL propia del endpoint (SECRETS_ENDPOINT_URL / SNS_ENDPOINT_URL).
+    SecretsManagerEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcEndpointType: Interface
+        ServiceName: com.amazonaws.${aws:region}.secretsmanager
+        VpcId: ${self:custom.vpc.vpcId}
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+        PrivateDnsEnabled: false
+    SnsEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcEndpointType: Interface
+        ServiceName: com.amazonaws.${aws:region}.sns
+        VpcId: ${self:custom.vpc.vpcId}
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+        PrivateDnsEnabled: false
+    S3Endpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcEndpointType: Gateway
+        ServiceName: com.amazonaws.${aws:region}.s3
+        VpcId: ${self:custom.vpc.vpcId}
+        RouteTableIds: [!Ref PrivateRouteTable]
+
+    # ---------- Credenciales de la BD en Secrets Manager ----------
+    # CloudFormation genera la contraseña; RDS la toma como contraseña maestra y el
+    # attachment agrega host/port/engine al secreto. Ninguna Lambda recibe la contraseña.
+    DbSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Description: Credenciales maestras de RDS PostgreSQL de ServiDesk (${self:provider.stage})
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "servidesk_admin"}'
+          GenerateStringKey: password
+          PasswordLength: 32
+          ExcludePunctuation: true   # RDS no admite / @ " ni espacios
+    # Clave HS256 de los JWT: la firma ms-identity y la valida el authorizer.
+    JwtSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Description: Clave HS256 de los JWT de ServiDesk (${self:provider.stage})
+        GenerateSecretString:
+          PasswordLength: 64
+          ExcludePunctuation: true
+    DbSecretAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Properties:
+        SecretId: !Ref DbSecret
+        TargetId: !Ref Database
+        TargetType: AWS::RDS::DBInstance
+
+    # ---------- RDS PostgreSQL (una sola instancia, en las subredes privadas) ----------
+    DbSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Subredes privadas de ServiDesk (sin ruta a internet)
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
     DbSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
         GroupDescription: Acceso a PostgreSQL (solo laboratorio)
-        SecurityGroupIngress:
+        SecurityGroupIngress:   # solo desde las Lambdas de ServiDesk
           - IpProtocol: tcp
             FromPort: 5432
             ToPort: 5432
-            CidrIp: 0.0.0.0/0
+            SourceSecurityGroupId: !GetAtt LambdaSecurityGroup.GroupId
     Database:
       Type: AWS::RDS::DBInstance
       DeletionPolicy: Delete
       Properties:
-        DBInstanceIdentifier: servidesk-${self:provider.stage}
+        DBInstanceIdentifier: servidesk-db-${self:provider.stage}
+        DBSubnetGroupName: !Ref DbSubnetGroup
         Engine: postgres
         EngineVersion: "16"
         DBInstanceClass: db.t3.micro
         AllocatedStorage: "20"
         MasterUsername: servidesk_admin
-        MasterUserPassword: ${env:DB_PASSWORD}
-        PubliclyAccessible: true
+        MasterUserPassword: !Join ["", ["{{resolve:secretsmanager:", !Ref DbSecret, ":SecretString:password}}"]]
+        PubliclyAccessible: false
         BackupRetentionPeriod: 0
         VPCSecurityGroups:
           - !GetAtt DbSecurityGroup.GroupId
@@ -119,6 +236,20 @@ resources:
   Outputs:
     DbHost:
       Value: !GetAtt Database.Endpoint.Address
+    DbSecretArn:
+      Value: !Ref DbSecret
+    JwtSecretArn:
+      Value: !Ref JwtSecret
+    LambdaSecurityGroupId:
+      Value: !GetAtt LambdaSecurityGroup.GroupId
+    SubnetA:
+      Value: !Ref PrivateSubnetA
+    SubnetB:
+      Value: !Ref PrivateSubnetB
+    SecretsEndpointUrl:
+      Value: !Join ["", ["https://", !Select [1, !Split [":", !Select [0, !GetAtt SecretsManagerEndpoint.DnsEntries]]]]]
+    SnsEndpointUrl:
+      Value: !Join ["", ["https://", !Select [1, !Split [":", !Select [0, !GetAtt SnsEndpoint.DnsEntries]]]]]
     EventsTopicArn:
       Value: !Ref EventsTopic
     AuthorizerArn:

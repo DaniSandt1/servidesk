@@ -20,9 +20,9 @@ import re
 import time
 
 import boto3
-import pg8000.native
 
 from common.db import _ssl  # mismo contexto SSL que el resto de Lambdas (RDS exige SSL)
+from common.db import connect as db_connect  # credenciales desde Secrets Manager
 
 TENANT_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 TABLE_RE = re.compile(r"^[a-z_]+$")
@@ -45,15 +45,13 @@ SERVICES = {
 TENANTS = ["andina", "pacifico", "unitec"]
 
 
-def connect(service, port=5432, host=None, ssl_context=_ssl):
-    return pg8000.native.Connection(
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        host=host or os.environ["DB_HOST"],
-        database=f"db_{service}",
-        port=port,
-        ssl_context=ssl_context,
-    )
+def connect(service, port=None, host=None, ssl_context=_ssl):
+    overrides = {"ssl_context": ssl_context}
+    if port:
+        overrides["port"] = port
+    if host:
+        overrides["host"] = host
+    return db_connect(f"db_{service}", **overrides)
 
 
 def load_tenant(conn, service, tenant, manifest, open_table):

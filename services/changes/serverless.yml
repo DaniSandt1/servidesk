@@ -12,13 +12,16 @@ provider:
   timeout: 15
   iam:
     role: arn:aws:iam::${aws:accountId}:role/LabRole
+  vpc:   # RDS es privada: las Lambdas corren en la VPC (salida solo por endpoints de VPC)
+    securityGroupIds: ["${param:lambdaSecurityGroupId}"]
+    subnetIds: ["${param:subnetA}", "${param:subnetB}"]
   layers:
     - ${param:commonLayerArn}
   environment:
-    DB_HOST: ${param:dbHost}
     DB_NAME: db_changes
-    DB_USER: servidesk_admin
-    DB_PASSWORD: ${env:DB_PASSWORD}
+    DB_SECRET_ARN: ${param:dbSecretArn}             # usuario/contraseña/host en Secrets Manager
+    SECRETS_ENDPOINT_URL: ${param:secretsEndpointUrl}
+    SNS_ENDPOINT_URL: ${param:snsEndpointUrl}
     EVENTS_TOPIC_ARN: ${param:eventsTopicArn}
     SERVICE_NAME: ms-changes
   httpApi:

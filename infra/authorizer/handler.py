@@ -4,10 +4,11 @@ Valida firma HS256, expiración y claims obligatorios del JWT que emite ms-ident
 (docs/API_CONTRACTS.md §3.2 y §3.3) y entrega a cada handler el contexto
 tenant_id, schema, role y user_id. El schema nunca sale del cliente.
 """
-import os
 import re
 
 import jwt
+
+from common.secrets import jwt_secret  # clave HS256 desde AWS Secrets Manager (JWT_SECRET_ARN)
 
 ROLES = ("admin", "agent", "customer")
 TENANT_RE = re.compile(r"^[a-z0-9_]{2,30}$")
@@ -24,7 +25,7 @@ def handle(event, context):
     try:
         claims = jwt.decode(
             token,
-            os.environ["JWT_SECRET"],
+            jwt_secret(),
             algorithms=["HS256"],
             options={"require": ["exp", "sub", "tenant_id", "schema", "role"]},
         )

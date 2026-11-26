@@ -1,11 +1,11 @@
 """ms-identity · ID-01 POST /auth/login y ID-02 GET /auth/me."""
 
-import os
 import time
 
 import jwt
 
 from common.db import get_conn, tenant_conn
+from common.secrets import jwt_secret
 from common.http import ok, tenant_ctx
 from handlers.identity_common import (
     TENANT_CODE_RE,
@@ -53,7 +53,7 @@ def issue_token(user, tenant_code, schema, now=None):
         "iat": now,
         "exp": now + TOKEN_TTL_SECONDS,
     }
-    return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm="HS256")
+    return jwt.encode(claims, jwt_secret(), algorithm="HS256")
 
 
 @handle_errors
