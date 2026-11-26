@@ -12,6 +12,7 @@ import json
 import uuid
 
 from common.db import tenant_conn
+from common.log import log
 
 RISK_ES = {"low": "bajo", "medium": "medio", "high": "alto"}
 REQUEST_VERB = {
@@ -188,7 +189,7 @@ def on_notify_event(event, context):
             if not fresh:
                 conn.run("COMMIT")
                 in_tx = False
-                print(f"Evento duplicado ignorado: {event_id}")
+                log("EVENTO DUPLICADO IGNORADO", event_type, tenant=msg["tenantId"], eventId=event_id[:8])
                 continue
 
             notifications = build_notifications(conn, event_type, data)
@@ -196,7 +197,9 @@ def on_notify_event(event, context):
 
             conn.run("COMMIT")
             in_tx = False
-            print(f"{event_type} {event_id}: {created} notificación(es)")
+            titles = "; ".join(str(n[1]) for n in notifications)
+            log("NOTIFICACIONES CREADAS (campana)", f"SQS identity-notify-q → {event_type}",
+                tenant=msg["tenantId"], creadas=created, mensaje=titles, eventId=event_id[:8])
 
         except Exception as exc:  # noqa: BLE001 - se reintenta vía SQS
             if conn is not None and in_tx:

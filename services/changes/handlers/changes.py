@@ -5,6 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+from common.log import http_logged
 from common.http import ok, tenant_ctx
 from common.db import tenant_conn
 from common.events import publish
@@ -92,6 +93,7 @@ def parse_date(value):
         .replace(tzinfo=None)
     )
 
+@http_logged
 def listChanges(event, context):
     """CH-01: GET /changes."""
 
@@ -338,6 +340,7 @@ def listChanges(event, context):
         },
     })
 
+@http_logged
 def createChange(event, context):
     """CH-02: POST /changes."""
 
@@ -697,6 +700,7 @@ def createChange(event, context):
         "data": detail
     }, 201)
 
+@http_logged
 def getChange(event, context):
     """CH-03: GET /changes/{id}."""
 
@@ -814,6 +818,7 @@ def getChange(event, context):
         "data": detail
     })
 
+@http_logged
 def updateChange(event, context):
     """CH-04: PATCH /changes/{id}."""
 
@@ -1194,6 +1199,7 @@ def updateChange(event, context):
     # 20. Devolver ChangeDetail actualizado
     return getChange(event, context)
 
+@http_logged
 def changeChangeStatus(event, context):
     """CH-05: PUT /changes/{id}/status."""
 
@@ -1436,6 +1442,7 @@ def changeChangeStatus(event, context):
 
     return detail_response
 
+@http_logged
 def approveChange(event, context):
     """CH-06: POST /changes/{id}/approve."""
 
@@ -1647,6 +1654,7 @@ def approveChange(event, context):
     # 15. Devolver ChangeDetail actualizado
     return getChange(event, context)
 
+@http_logged
 def rejectChange(event, context):
     """CH-07: POST /changes/{id}/reject."""
 

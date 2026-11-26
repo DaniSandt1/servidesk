@@ -10,6 +10,7 @@ import json
 import uuid
 
 from common.db import tenant_conn
+from common.log import log
 
 
 def _uuid_or_none(value):
@@ -55,9 +56,10 @@ def _consume(event, expected_type, apply):
             )
             if fresh:
                 summary = apply(conn, msg.get("data") or {})
-                print(f"{expected_type} {event_id}: {summary}")
+                log("EVENTO PROCESADO", f"SQS → {expected_type}", summary,
+                    tenant=msg["tenantId"], key=(msg.get("data") or {}).get("key"), eventId=event_id[:8])
             else:
-                print(f"Evento duplicado ignorado: {event_id}")
+                log("EVENTO DUPLICADO IGNORADO", expected_type, tenant=msg["tenantId"], eventId=event_id[:8])
 
             conn.run("COMMIT")
             in_tx = False

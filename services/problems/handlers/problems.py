@@ -3,12 +3,14 @@
 import uuid
 import json
 from datetime import date, datetime
+from common.log import http_logged
 from common.events import publish
 
 from common.http import ok, error, tenant_ctx
 from common.db import tenant_conn
 
 
+@http_logged
 def listProblems(event, context):
     """PR-01: GET /problems."""
 
@@ -220,6 +222,7 @@ def listProblems(event, context):
         },
     })
 
+@http_logged
 def createProblem(event, context):
     """PR-02: POST /problems."""
 
@@ -517,6 +520,7 @@ def createProblem(event, context):
         "data": problem_detail
     }, 201)
 
+@http_logged
 def getProblem(event, context):
     """PR-03: GET /problems/{id}."""
 
@@ -651,6 +655,7 @@ def getProblem(event, context):
         "data": problem_detail
     })
 
+@http_logged
 def updateProblem(event, context):
     """PR-04: PATCH /problems/{id}."""
 
@@ -835,6 +840,7 @@ def updateProblem(event, context):
     # 10. Reutilizar PR-03 para devolver ProblemDetail
     return getProblem(event, context)
 
+@http_logged
 def changeProblemStatus(event, context):
     """PR-05: PUT /problems/{id}/status."""
 
@@ -984,6 +990,7 @@ def changeProblemStatus(event, context):
     # 13. Reutilizar PR-03 para obtener ProblemDetail
     return getProblem(event, context)
 
+@http_logged
 def publishKnownError(event, context):
     """PR-06: POST /problems/{id}/known-error."""
 
@@ -1166,6 +1173,7 @@ def publishKnownError(event, context):
 
     return detail_response
 
+@http_logged
 def linkProblemIncidents(event, context):
     """PR-07: POST /problems/{id}/incidents."""
 

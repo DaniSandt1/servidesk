@@ -5,6 +5,7 @@ import uuid
 
 from common.db import tenant_conn
 from common.events import publish
+from common.log import log
 
 
 def on_ci_status_changed(event, context):
@@ -23,6 +24,9 @@ def on_ci_status_changed(event, context):
 
             # 2. Procesar únicamente los CI caídos
             if msg["data"].get("status") != "down":
+                log("EVENTO RECIBIDO", "SQS incidents-ci-q → CIStatusChanged", tenant=msg.get("tenantId"),
+                    ci=msg["data"].get("name"), estado=msg["data"].get("status"),
+                    resultado="el CI no está caído: no se crea incidente")
                 continue
 
             # 3. Obtener los identificadores del evento
@@ -62,7 +66,7 @@ def on_ci_status_changed(event, context):
             if not processed:
                 conn.run("COMMIT")
                 transaction_started = False
-                print(f"Evento duplicado ignorado: {event_id}")
+                log("EVENTO DUPLICADO IGNORADO", "CIStatusChanged", tenant=tenant_id, eventId=event_id[:8])
                 continue
 
             # 7. Buscar la política SLA de P2
@@ -194,10 +198,9 @@ def on_ci_status_changed(event, context):
                 source="ms-incidents",
             )
 
-            print(
-                f"Incidente automático creado: "
-                f"{incident_key} para CI {ci_id}"
-            )
+            log("INCIDENTE AUTOMÁTICO CREADO", "SQS incidents-ci-q → CIStatusChanged (down)",
+                incident_key, tenant=tenant_id, ci=ci_name, prioridad="P2", canal="auto",
+                eventId=event_id[:8])
 
         except Exception as exc:
             # 13. Revertir transacción si hubo error
