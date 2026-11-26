@@ -4,7 +4,7 @@ Proyecto final de Cloud Computing. Monorepo con:
 
 | Carpeta | Qué hay | Responsable |
 | --- | --- | --- |
-| `infra/` | RDS PostgreSQL, SNS, S3, layer común, Lambda Authorizer | Vannia (+ José el authorizer) |
+| `infra/` | RDS PostgreSQL (privada) + secreto en Secrets Manager, endpoints de VPC, SNS, S3, layer común, Lambda Authorizer | Vannia (+ José el authorizer) |
 | `services/identity`, `services/cmdb` | Identidad (login/JWT) y CMDB | José |
 | `services/incidents`, `services/problems` | Incidentes y Problemas | Ian |
 | `services/changes`, `services/requests` | Cambios y Solicitudes | Daniel |
@@ -17,9 +17,7 @@ Proyecto final de Cloud Computing. Monorepo con:
 > Guía completa paso a paso, para cualquier integrante en su propia cuenta: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 1. Copiar credenciales de *AWS Details* a `~/.aws/credentials` (caducan cada ~4 h).
-2. `cp .env.example .env`, poner claves propias y cargarlas en la terminal:
-   - Mac/Linux: `set -a; source .env; set +a`
-   - Windows PowerShell: `Get-Content .env | % { $k,$v = $_ -split '=',2; if ($k -and $k -notmatch '^#') { Set-Item "env:$k" $v } }`
+2. No hace falta `.env`: la contraseña de RDS y la clave de los JWT las genera CloudFormation en AWS Secrets Manager.
 3. `npm install`
 4. `npm run deploy`  (instala el layer y despliega infra + 6 servicios con serverless-compose)
 5. Ejecutar la función `migrate` de cada servicio, **empezando por identity** (crea `public.tenants` y las cuentas demo):

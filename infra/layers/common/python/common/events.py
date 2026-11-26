@@ -6,7 +6,8 @@ import uuid
 
 import boto3
 
-_sns = boto3.client("sns")
+# Endpoint de VPC propio: las Lambdas están en la VPC sin salida a internet
+_sns = boto3.client("sns", endpoint_url=os.environ.get("SNS_ENDPOINT_URL") or None)
 
 
 def publish(event_type: str, tenant_id: str, data: dict, source: str):

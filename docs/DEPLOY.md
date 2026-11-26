@@ -62,24 +62,17 @@ Si en Mac pip responde `externally-managed-environment`, crea un entorno virtual
 
    Debe mostrar un ARN con `voclabs`.
 
-## 3. Crear tu `.env` (secretos propios, no se versiona)
+## 3. Secretos (no hace falta `.env`)
 
-```powershell
-python -c "import secrets; print('DB_PASSWORD=' + secrets.token_hex(16)); print('JWT_SECRET=' + secrets.token_urlsafe(48))" | Out-File -Encoding ascii .env
-Get-Content .env | % { $k,$v = $_ -split '=',2; if ($k -and $k -notmatch '^#') { Set-Item "env:$k" $v } }
-$env:DB_PASSWORD.Length; $env:JWT_SECRET.Length     # 32 y 64
-```
+Los dos secretos del backend los genera CloudFormation en **AWS Secrets Manager** durante el deploy;
+ninguno se escribe en archivos ni en variables de entorno de las Lambdas:
 
-*bash*:
-```bash
-python3 -c "import secrets; print('DB_PASSWORD=' + secrets.token_hex(16)); print('JWT_SECRET=' + secrets.token_urlsafe(48))" > .env
-set -a; . ./.env; set +a
-```
+| Secreto | Contenido | Lo usan |
+| --- | --- | --- |
+| *DbSecret* | `username`, `password`, `host`, `port` de RDS (la contraseña maestra de RDS sale de aquí) | Lambdas de los 6 servicios y `seedLoader` (`DB_SECRET_ARN`) |
+| *JwtSecret* | clave HS256 de los JWT | `login` de ms-identity (firma) y el Lambda Authorizer (valida) (`JWT_SECRET_ARN`) |
 
-- Cada persona usa **sus propios** valores; no copies el `.env` de otro.
-- **No cambies `.env` después del primer deploy**: la contraseña queda fijada en RDS y el secreto del JWT
-  debe ser el mismo en el authorizer y en ms-identity.
-- La segunda línea (cargar variables) hay que repetirla **en cada terminal nueva** antes de desplegar.
+Para verlos: consola → Secrets Manager → secretos del stack `servidesk-infra-dev`.
 
 ## 4. Desplegar el backend (~15–20 min)
 
@@ -89,6 +82,13 @@ npm run deploy
 
 Instala la capa común (pg8000, PyJWT) para Lambda, despliega `infra` (RDS, SNS, S3, authorizer,
 seedLoader; RDS tarda 10–15 min) y luego los 6 servicios en paralelo. Termina con 7 líneas `✔ … deployed`.
+
+> **Red:** RDS es **privada**: vive en 2 subredes privadas propias (172.31.200.0/24 y 172.31.201.0/24
+> dentro de la VPC por defecto, sin ruta a internet), `PubliclyAccessible: false` y el puerto 5432 solo
+> acepta al security group de las Lambdas. Las Lambdas que usan la BD corren en esas mismas subredes y,
+> como no hay NAT, salen a Secrets Manager y SNS por endpoints de VPC *interface* y a S3 por un endpoint
+> *gateway*. Desde tu computadora ya no puedes conectarte a la BD directamente:
+> usa las funciones `migrate` y `seedLoader`.
 
 ## 5. Migraciones, URLs y prueba de humo (~2 min)
 
@@ -148,12 +148,12 @@ Para la demo de eventos: entra como agente o admin a `/demo/plataforma` y usa **
 2. `python scripts/aws_check.py smoke` para comprobar que todo responde. Al empezar **reactiva las colas
    SQS → Lambda**: el Learner Lab desactiva los *event source mappings* al cerrar la sesión y, sin esto, los
    eventos quedan esperando en las colas (no se pierden). Solo reactivar: `python scripts/aws_check.py enable`.
-3. Si falla la conexión a la base: consola de AWS → **RDS** → `servidesk-dev`. Si está *Stopped*:
+3. Si falla la conexión a la base: consola de AWS → **RDS** → `servidesk-db-dev`. Si está *Stopped*:
    **Acciones → Iniciar** (~5 min).
 
 No hace falta volver a desplegar. Solo si cambias código:
 
-| Cambiaste… | Comando (antes, cargar `.env` como en el paso 3) |
+| Cambiaste… | Comando |
 | --- | --- |
 | Un servicio | `npx serverless <servicio>:deploy` (p. ej. `incidents:deploy`) |
 | Todo | `npm run deploy` |
