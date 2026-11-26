@@ -233,6 +233,7 @@ const arquitectura2 = [
     ["Almacenamiento", "Amazon S3 (3 buckets)", "seed: CSV comprimidos de la carga de datos; attachments y exports: provisionados para adjuntos y exportes."],
     ["Observabilidad", "Amazon CloudWatch Logs", "Un grupo de logs por función, con la duración de cada invocación y los mensajes de los consumidores."],
     ["Despliegue", "AWS CloudFormation +\nServerless Framework v3", "7 stacks (infra + 6 servicios) desplegados con `npm run deploy` (serverless-compose)."],
+    ["Identidad", "IAM LabRole", "Rol de ejecución de todas las Lambdas (AWS Academy no permite crear roles)."],
   ], [14, 26, 60]),
   gap(),
   H2("2.2 Recorrido de una petición"),
