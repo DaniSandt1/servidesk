@@ -4,8 +4,9 @@
     python docs/diagramas/build_diagrams.py --no-png   # solo los .drawio
 
 Salida (docs/diagramas/):
-    servidesk_arquitectura.drawio  -> 1_diagrama_arquitectura.png
     servidesk_er.drawio (6 páginas) -> 2_er_identity.png ... 7_er_requests.png
+
+La arquitectura de solución se genera con build_arquitectura_v2.py.
 
 Estilo tomado de los diagramas del proyecto 1 (CloudCommerce): contenedor AWS Cloud, cajas con
 tinte y borde por categoría de AWS, flechas ortogonales con etiqueta y color por tipo de flujo,
@@ -779,18 +780,17 @@ def main():
     parser.add_argument("--no-png", action="store_true")
     args = parser.parse_args()
 
-    arch = OUT / "servidesk_arquitectura.drawio"
-    save([architecture()], arch)
+    # La arquitectura vigente (RDS privada) se genera con build_arquitectura_v2.py;
+    # architecture() es la versión anterior (RDS pública) y ya no se exporta.
     er = OUT / "servidesk_er.drawio"
     er_pages = [er_identity(), er_cmdb(), er_incidents(), er_problems(), er_changes(), er_requests()]
     save(er_pages, er)
-    print(f"  {arch.name}\n  {er.name} ({len(er_pages)} páginas)")
+    print(f"  {er.name} ({len(er_pages)} páginas)")
 
     if args.no_png:
         return
     if not DRAWIO.exists():
         sys.exit("No se encontró draw.io Desktop; usa --no-png y exporta desde la app.")
-    export(arch, OUT / "1_diagrama_arquitectura.png", 0)
     for i, name in enumerate(["identity", "cmdb", "incidents", "problems", "changes", "requests"]):
         export(er, OUT / f"{i + 2}_er_{name}.png", i)
 

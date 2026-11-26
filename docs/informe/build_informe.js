@@ -160,7 +160,7 @@ const portada = [
     "Ian Jesus Rodríguez Santayana (202310184)", "Vannia Fatima Curay Mauricio (201910133)",
     "Mia Wood De la fuente chavez (202410085)"].map((n) => coverLine(n, { after: 120 })),
   coverLine("Profesor:", { bold: true, before: 900 }),
-  coverLine("Lezama, Aldo"),
+  coverLine("Mejia, Oscar"),
   pageBreak(),
   new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 },
     children: [new TextRun({ text: "ÍNDICE", bold: true, font: FONT, size: 28 })] }),
