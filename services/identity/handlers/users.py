@@ -1,5 +1,6 @@
 """ms-identity · ID-03..ID-07: usuarios y equipos."""
 
+from common.log import http_logged
 from common.db import tenant_conn
 from common.events import publish
 from common.http import ok, tenant_ctx
@@ -38,6 +39,7 @@ TEAM_FIELDS = ("id", "name", "description")
 # ------------------------------------------------------------------ ID-03 GET /users
 
 
+@http_logged
 @handle_errors
 def listUsers(event, context):
     ctx = tenant_ctx(event)
@@ -103,6 +105,7 @@ def listUsers(event, context):
 # ------------------------------------------------------------------ ID-04 GET /users/{id}
 
 
+@http_logged
 @handle_errors
 def getUser(event, context):
     ctx = tenant_ctx(event)
@@ -126,6 +129,7 @@ def getUser(event, context):
 # ------------------------------------------------------------------ ID-05 POST /users
 
 
+@http_logged
 @handle_errors
 def createUser(event, context):
     ctx = tenant_ctx(event)
@@ -197,6 +201,7 @@ def _email_exists(context):
 # ------------------------------------------------------------------ ID-06 PATCH /users/{id}
 
 
+@http_logged
 @handle_errors
 def updateUser(event, context):
     ctx = tenant_ctx(event)
@@ -271,6 +276,7 @@ def updateUser(event, context):
 # ------------------------------------------------------------------ ID-07 GET /teams
 
 
+@http_logged
 @handle_errors
 def listTeams(event, context):
     ctx = tenant_ctx(event)

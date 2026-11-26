@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+from common.log import http_logged
 from common.http import ok, tenant_ctx
 from common.db import tenant_conn
 from common.events import publish
@@ -80,6 +81,7 @@ def serialize_incident(incident):
 
     return result
 
+@http_logged
 def listIncidents(event, context):
     ctx = tenant_ctx(event)
     role = ctx["role"]
@@ -318,6 +320,7 @@ def listIncidents(event, context):
         },
     })
 
+@http_logged
 def createIncident(event, context):
     # 1. Obtener el contexto del usuario autenticado
     ctx = tenant_ctx(event)
@@ -620,6 +623,7 @@ def createIncident(event, context):
         "data": serialize_incident(incident)
     }, 201)
 
+@http_logged
 def getIncident(event, context):
     """IN-03: GET /incidents/{id}."""
 
@@ -692,6 +696,7 @@ def getIncident(event, context):
         "data": serialize_incident(incident)
     })
 
+@http_logged
 def updateIncident(event, context):
     """IN-04: PATCH /incidents/{id}."""
 
@@ -993,6 +998,7 @@ def updateIncident(event, context):
         "data": serialize_incident(updated)
     })
 
+@http_logged
 def changeIncidentStatus(event, context):
     """IN-05: PUT /incidents/{id}/status."""
 
@@ -1285,6 +1291,7 @@ def changeIncidentStatus(event, context):
         "data": serialize_incident(updated)
     })
 
+@http_logged
 def listIncidentComments(event, context):
     """IN-06: GET /incidents/{id}/comments."""
 
@@ -1452,6 +1459,7 @@ def listIncidentComments(event, context):
         },
     })
 
+@http_logged
 def addIncidentComment(event, context):
     """IN-07: POST /incidents/{id}/comments."""
 

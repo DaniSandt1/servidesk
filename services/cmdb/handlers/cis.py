@@ -7,6 +7,7 @@ ms-incidents (incidents-ci-q) abre un incidente P2 automático.
 
 import json
 
+from common.log import http_logged
 from common.db import tenant_conn
 from common.events import publish
 from common.http import ok, tenant_ctx
@@ -175,6 +176,7 @@ def _publish_status_changed(ctx, ci, previous_status):
 # ------------------------------------------------------------------ CM-01 GET /cis
 
 
+@http_logged
 @handle_errors
 def listCis(event, context):
     ctx = tenant_ctx(event)
@@ -236,6 +238,7 @@ def listCis(event, context):
 # ------------------------------------------------------------------ CM-02 POST /cis
 
 
+@http_logged
 @handle_errors
 def createCi(event, context):
     ctx = tenant_ctx(event)
@@ -280,6 +283,7 @@ def createCi(event, context):
 # ------------------------------------------------------------------ CM-03 GET /cis/{id}
 
 
+@http_logged
 @handle_errors
 def getCi(event, context):
     ctx = tenant_ctx(event)
@@ -298,6 +302,7 @@ def getCi(event, context):
 # ------------------------------------------------------------------ CM-04 PATCH /cis/{id}
 
 
+@http_logged
 @handle_errors
 def updateCi(event, context):
     ctx = tenant_ctx(event)
@@ -390,6 +395,7 @@ def _set_status(conn, ctx, ci_id, new_status):
     return _fetch_ci(conn, ci_id), previous
 
 
+@http_logged
 @handle_errors
 def changeCiStatus(event, context):
     ctx = tenant_ctx(event)
@@ -440,6 +446,7 @@ def changeCiStatus(event, context):
 # ------------------------------------------------------------------ CM-06 DELETE /cis/{id}
 
 
+@http_logged
 @handle_errors
 def deleteCi(event, context):
     """Baja lógica: status = retired. Idempotente (204 también si ya estaba retirado)."""
@@ -469,6 +476,7 @@ def deleteCi(event, context):
 # ------------------------------------------------------------------ CM-07 GET /cis/{id}/relations
 
 
+@http_logged
 @handle_errors
 def listCiRelations(event, context):
     ctx = tenant_ctx(event)
@@ -508,6 +516,7 @@ def listCiRelations(event, context):
 # ------------------------------------------------------------------ CM-08 GET /ci-types
 
 
+@http_logged
 @handle_errors
 def listCiTypes(event, context):
     ctx = tenant_ctx(event)

@@ -6,6 +6,7 @@ import math
 import uuid
 from datetime import datetime, date, timezone
 
+from common.log import http_logged
 from common.http import ok, tenant_ctx
 from common.db import tenant_conn
 from common.events import publish
@@ -233,6 +234,7 @@ def validate_form_data(form_data, fields):
 # RQ-01: GET /catalog
 # =====================================================
 
+@http_logged
 def listCatalog(event, context):
     """Listar el catálogo de servicios de un tenant."""
 
@@ -341,6 +343,7 @@ def listCatalog(event, context):
 # RQ-02: GET /requests
 # =====================================================
 
+@http_logged
 def listRequests(event, context):
     """Listar solicitudes con filtros y paginación."""
 
@@ -638,6 +641,7 @@ def listRequests(event, context):
 # RQ-03: POST /requests
 # =====================================================
 
+@http_logged
 def createRequest(event, context):
     """Crear una solicitud de servicio."""
 
@@ -915,6 +919,7 @@ def createRequest(event, context):
 # RQ-04: GET /requests/{id}
 # =====================================================
 
+@http_logged
 def getRequest(event, context):
     """Consultar una solicitud con sus aprobaciones."""
 
@@ -1040,6 +1045,7 @@ def getRequest(event, context):
 # RQ-05: PATCH /requests/{id}
 # =====================================================
 
+@http_logged
 def updateRequest(event, context):
     """Actualizar responsable o formulario de una solicitud."""
 
@@ -1354,6 +1360,7 @@ REQUEST_STATUS_EVENTS = {
     "fulfilled": "RequestFulfilled",
 }
 
+@http_logged
 def changeRequestStatus(event, context):
     """Cambiar el estado de una solicitud de servicio."""
 

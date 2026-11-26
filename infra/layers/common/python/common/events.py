@@ -6,6 +6,8 @@ import uuid
 
 import boto3
 
+from common.log import log
+
 # Endpoint de VPC propio: las Lambdas están en la VPC sin salida a internet
 _sns = boto3.client("sns", endpoint_url=os.environ.get("SNS_ENDPOINT_URL") or None)
 
@@ -27,3 +29,7 @@ def publish(event_type: str, tenant_id: str, data: dict, source: str):
             "tenantId": {"DataType": "String", "StringValue": tenant_id},
         },
     )
+    data = data or {}
+    log("EVENTO PUBLICADO → SNS", event_type, tenant=tenant_id, origen=source,
+        key=data.get("key"), estado=data.get("status"), prioridad=data.get("priority"),
+        eventId=message["eventId"][:8])

@@ -4,6 +4,7 @@ import time
 
 import jwt
 
+from common.log import http_logged
 from common.db import get_conn, tenant_conn
 from common.secrets import jwt_secret
 from common.http import ok, tenant_ctx
@@ -56,6 +57,7 @@ def issue_token(user, tenant_code, schema, now=None):
     return jwt.encode(claims, jwt_secret(), algorithm="HS256")
 
 
+@http_logged
 @handle_errors
 def login(event, context):
     """ID-01: valida tenant_code + email + password y firma un JWT HS256 de 1 hora."""
@@ -109,6 +111,7 @@ def login(event, context):
     })
 
 
+@http_logged
 @handle_errors
 def me(event, context):
     """ID-02: usuario autenticado (restaura la sesión al recargar la página)."""

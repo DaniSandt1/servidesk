@@ -18,6 +18,17 @@ if "common" not in sys.modules:
     common.__path__ = []
     sys.modules["common"] = common
 
+if "common.log" not in sys.modules:  # log real del layer (solo imprime, sin AWS)
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "common.log",
+        Path(__file__).resolve().parents[3] / "infra" / "layers" / "common" / "python" / "common" / "log.py",
+    )
+    _log = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_log)
+    sys.modules["common.log"] = _log
+
+
 if "common.db" not in sys.modules:
     db = types.ModuleType("common.db")
     db.tenant_conn = MagicMock()

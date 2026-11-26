@@ -9,6 +9,7 @@ import json
 import uuid
 
 from common.db import tenant_conn
+from common.log import log
 
 
 def _uuid_or_none(value):
@@ -83,9 +84,11 @@ def on_change_implemented(event, context):
             )
             if fresh:
                 updated = _apply_versions(conn, msg.get("data") or {})
-                print(f"ChangeImplemented {event_id}: versión aplicada en {updated} CI")
+                log("CMDB ACTUALIZADA POR CAMBIO", "SQS cmdb-changes-q → ChangeImplemented",
+                    tenant=msg["tenantId"], cambio=(msg.get("data") or {}).get("key"),
+                    cis_actualizados=updated, eventId=event_id[:8])
             else:
-                print(f"Evento duplicado ignorado: {event_id}")
+                log("EVENTO DUPLICADO IGNORADO", "ChangeImplemented", tenant=msg["tenantId"], eventId=event_id[:8])
             conn.run("COMMIT")
             in_tx = False
         except Exception as exc:  # noqa: BLE001 - se reintenta vía SQS

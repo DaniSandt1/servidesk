@@ -5,6 +5,7 @@ Rutas propuestas en frontend/src/api/notificationService.ts:
     POST /notifications/read {ids?} -> 204 (sin ids marca todas)
 """
 
+from common.log import http_logged
 from common.db import tenant_conn
 from common.http import ok, tenant_ctx
 from handlers.identity_common import (
@@ -31,6 +32,7 @@ NOTIFICATION_FIELDS = (
 )
 
 
+@http_logged
 @handle_errors
 def listNotifications(event, context):
     ctx = tenant_ctx(event)
@@ -64,6 +66,7 @@ def listNotifications(event, context):
     })
 
 
+@http_logged
 @handle_errors
 def markNotificationsRead(event, context):
     ctx = tenant_ctx(event)
